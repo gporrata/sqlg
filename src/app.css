@@ -136,6 +136,12 @@ button:disabled {
   overflow: auto;
 }
 
+.result-tree {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
 .connection-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -202,6 +208,8 @@ button:disabled {
 }
 
 .result-node {
+  width: max-content;
+  min-width: 100%;
   border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
   border-radius: 8px;
   margin-bottom: 12px;
@@ -244,7 +252,8 @@ button:disabled {
 }
 
 table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }

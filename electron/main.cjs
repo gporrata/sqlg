@@ -7,7 +7,7 @@ const { Client } = require("pg");
 const isDev = process.env.NODE_ENV !== "production";
 
 function storePath() {
-  return path.join(app.getPath("userData"), "sqlg-poc-store.json");
+  return path.join(app.getPath("home"), ".config", "sql", "config.json");
 }
 
 function emptyStore() {

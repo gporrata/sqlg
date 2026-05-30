@@ -1,0 +1,12 @@
+.*
+!.gitignore
+!.github
+
+node_modules
+target
+dist
+
+*.log
+*.tmp
+*.zip
+*.bak

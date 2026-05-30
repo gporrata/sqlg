@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+
+const { spawnSync } = require("node:child_process");
+
+const [command, ...args] = process.argv.slice(2);
+const yarn = process.platform === "win32" ? "yarn.cmd" : "yarn";
+
+function run(script, scriptArgs = []) {
+  const result = spawnSync(yarn, ["run", script, ...scriptArgs], { stdio: "inherit" });
+  process.exit(result.status ?? 1);
+}
+
+if (!command) {
+  run("electron:dev");
+}
+
+if (["add", "list", "remove"].includes(command)) {
+  run(`connection:${command}`, args);
+}
+
+console.error(`Unknown command: ${command}`);
+console.error("Usage: sqlg [add|list|remove]");
+process.exit(1);

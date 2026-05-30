@@ -3,9 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "main": "electron/main.cjs",
+  "bin": {
+    "sqlg": "./sqlg"
+  },
   "packageManager": "yarn@1.22.22",
   "type": "module",
   "scripts": {
+    "connection:add": "node scripts/connections.cjs add",
+    "connection:list": "node scripts/connections.cjs list",
+    "connection:remove": "node scripts/connections.cjs remove",
     "electron": "wait-on tcp:5173 && electron .",
     "electron:dev": "concurrently -k \"yarn dev\" \"yarn electron\"",
     "build": "vite build",

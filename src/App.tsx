@@ -11,22 +11,10 @@ const themeOptions: { value: ThemeName; label: string }[] = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
   { value: "solarized", label: "Solarized" },
+  { value: "gruvbox", label: "Gruvbox" },
+  { value: "winter-solarized", label: "Winter Solarized" },
+  { value: "ayu-light", label: "Ayu Light" },
 ];
-
-const starterSql = `select
-  c.id,
-  c.name,
-  c.email,
-  o.id as orders__id,
-  o.order_number as orders__order_number,
-  o.total as orders__total,
-  oi.id as items__id,
-  oi.sku as items__sku,
-  oi.quantity as items__quantity
-from customers c
-left join orders o on o.customer_id = c.id
-left join order_items oi on oi.order_id = o.id
-order by c.id, o.id, oi.id;`;
 
 const api = window.sqlg ?? createBrowserPreviewApi();
 
@@ -34,7 +22,7 @@ function App() {
   const [tab, setTab] = useState<TabName>("connections");
   const [connections, setConnections] = useState<Connection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState("");
-  const [sqlText, setSqlText] = useState(starterSql);
+  const [sqlText, setSqlText] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [footer, setFooter] = useState("Ready");
   const [settings, setSettings] = useState<Settings>({ theme: "system" });
@@ -326,7 +314,7 @@ function EditorViewPane(props: {
         extensions: [
           basicSetup,
           sql(),
-          props.settings.theme === "dark" || props.settings.theme === "solarized" ? oneDark : [],
+          props.settings.theme === "dark" || props.settings.theme === "solarized" || props.settings.theme === "gruvbox" ? oneDark : [],
           EditorView.updateListener.of((update) => {
             if (update.docChanged) props.onChange(update.state.doc.toString());
           }),

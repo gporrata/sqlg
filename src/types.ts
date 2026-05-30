@@ -1,5 +1,5 @@
 export type DbType = "postgres" | "mysql";
-export type ThemeName = "system" | "light" | "dark" | "solarized";
+export type ThemeName = "system" | "light" | "dark" | "solarized" | "gruvbox" | "winter-solarized" | "ayu-light";
 export type TabName = "connections" | "editor" | "results";
 
 export type Connection = {

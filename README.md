@@ -49,27 +49,6 @@ Default connections:
 | Postgres | `127.0.0.1` | `55432` | `sqlg` | `sqlg` | `sqlg` |
 | MySQL | `127.0.0.1` | `33306` | `sqlg` | `root` | `sqlg` |
 
-The editor starts with a query that demonstrates hierarchical results:
-
-```sql
-select
-  c.id,
-  c.name,
-  c.email,
-  o.id as orders__id,
-  o.order_number as orders__order_number,
-  o.total as orders__total,
-  oi.id as items__id,
-  oi.sku as items__sku,
-  oi.quantity as items__quantity
-from customers c
-left join orders o on o.customer_id = c.id
-left join order_items oi on oi.order_id = o.id
-order by c.id, o.id, oi.id;
-```
-
-Reset sample database state:
-
 ```sh
 docker compose down -v
 docker compose up -d

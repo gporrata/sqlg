@@ -8,8 +8,14 @@
 }
 
 :root[data-theme="dark"],
-:root[data-theme="solarized"] {
+:root[data-theme="solarized"],
+:root[data-theme="gruvbox"] {
   color-scheme: dark;
+}
+
+:root[data-theme="winter-solarized"],
+:root[data-theme="ayu-light"] {
+  color-scheme: light;
 }
 
 * {
@@ -366,4 +372,118 @@ select {
 :root[data-theme="solarized"] .modal,
 :root[data-theme="solarized"] th {
   background: #073642;
+}
+
+:root[data-theme="gruvbox"] body {
+  background: #282828;
+  color: #ebdbb2;
+}
+
+:root[data-theme="gruvbox"] .app-header,
+:root[data-theme="gruvbox"] .connection-row,
+:root[data-theme="gruvbox"] .modal,
+:root[data-theme="gruvbox"] .result-node,
+:root[data-theme="gruvbox"] th {
+  background: #3c3836;
+}
+
+:root[data-theme="gruvbox"] .primary,
+:root[data-theme="gruvbox"] .footer {
+  background: #b57614;
+  border-color: #b57614;
+}
+
+:root[data-theme="gruvbox"] .tabs button.active,
+:root[data-theme="gruvbox"] .result-node summary {
+  background: color-mix(in srgb, #b57614 20%, Canvas);
+}
+
+:root[data-theme="gruvbox"] .tabs button.active {
+  box-shadow: inset 0 -3px #fabd2f;
+}
+
+:root[data-theme="gruvbox"] .connection-row.selected {
+  border-color: #fabd2f;
+  background: color-mix(in srgb, #fabd2f 12%, Canvas);
+}
+
+:root[data-theme="gruvbox"] .result-children,
+:root[data-theme="gruvbox"] .child-table {
+  border-left-color: #fabd2f;
+}
+
+:root[data-theme="winter-solarized"] body {
+  background: #f4fbff;
+  color: #223843;
+}
+
+:root[data-theme="winter-solarized"] .app-header,
+:root[data-theme="winter-solarized"] .connection-row,
+:root[data-theme="winter-solarized"] .modal,
+:root[data-theme="winter-solarized"] .result-node,
+:root[data-theme="winter-solarized"] th {
+  background: #e5f2f7;
+}
+
+:root[data-theme="winter-solarized"] .primary,
+:root[data-theme="winter-solarized"] .footer {
+  background: #2f6f89;
+  border-color: #2f6f89;
+}
+
+:root[data-theme="winter-solarized"] .tabs button.active,
+:root[data-theme="winter-solarized"] .result-node summary {
+  background: color-mix(in srgb, #2f6f89 14%, Canvas);
+}
+
+:root[data-theme="winter-solarized"] .tabs button.active {
+  box-shadow: inset 0 -3px #2f6f89;
+}
+
+:root[data-theme="winter-solarized"] .connection-row.selected {
+  border-color: #2f6f89;
+  background: color-mix(in srgb, #2f6f89 10%, Canvas);
+}
+
+:root[data-theme="winter-solarized"] .result-children,
+:root[data-theme="winter-solarized"] .child-table {
+  border-left-color: #2f6f89;
+}
+
+:root[data-theme="ayu-light"] body {
+  background: #fafafa;
+  color: #5c6166;
+}
+
+:root[data-theme="ayu-light"] .app-header,
+:root[data-theme="ayu-light"] .connection-row,
+:root[data-theme="ayu-light"] .modal,
+:root[data-theme="ayu-light"] .result-node,
+:root[data-theme="ayu-light"] th {
+  background: #f3f4f5;
+}
+
+:root[data-theme="ayu-light"] .primary,
+:root[data-theme="ayu-light"] .footer {
+  background: #ff9940;
+  border-color: #ff9940;
+}
+
+:root[data-theme="ayu-light"] .tabs button.active,
+:root[data-theme="ayu-light"] .result-node summary {
+  background: color-mix(in srgb, #ff9940 16%, Canvas);
+}
+
+:root[data-theme="ayu-light"] .tabs button.active {
+  box-shadow: inset 0 -3px #ff9940;
+}
+
+:root[data-theme="ayu-light"] .connection-row.selected {
+  border-color: #ff9940;
+  background: color-mix(in srgb, #ff9940 10%, Canvas);
+}
+
+:root[data-theme="ayu-light"] .result-children,
+:root[data-theme="ayu-light"] .child-table {
+  border-left-color: #ff9940;
 }

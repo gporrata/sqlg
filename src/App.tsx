@@ -4,7 +4,7 @@ import { sql } from "@codemirror/lang-sql";
 import { EditorState } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { Database, Play, Plus, Settings as SettingsIcon, Trash2, X } from "lucide-react";
-import type { Connection, ConnectionInput, QueryResult, Settings, TabName, ThemeName } from "./types";
+import type { Connection, ConnectionInput, QueryResult, ResultColumn, SchemaForeignKey, SchemaMetadata, Settings, TabName, ThemeName } from "./types";
 
 const themeOptions: { value: ThemeName; label: string }[] = [
   { value: "system", label: "System" },
@@ -219,6 +219,28 @@ function createBrowserPreviewApi(): Window["sqlg"] {
           { id: 2, name: "Grace Hopper", email: "grace@example.com", orders__id: 3, orders__order_number: "PG-1003", orders__total: "75.25", items__id: 4, items__sku: "PLAN-HOODIE", items__quantity: 1 },
         ],
         fields: ["id", "name", "email", "orders__id", "orders__order_number", "orders__total", "items__id", "items__sku", "items__quantity"],
+        columns: [
+          { name: "id", schema: "public", table: "customers", column: "id" },
+          { name: "name", schema: "public", table: "customers", column: "name" },
+          { name: "email", schema: "public", table: "customers", column: "email" },
+          { name: "orders__id", schema: "public", table: "orders", column: "id" },
+          { name: "orders__order_number", schema: "public", table: "orders", column: "order_number" },
+          { name: "orders__total", schema: "public", table: "orders", column: "total" },
+          { name: "items__id", schema: "public", table: "order_items", column: "id" },
+          { name: "items__sku", schema: "public", table: "order_items", column: "sku" },
+          { name: "items__quantity", schema: "public", table: "order_items", column: "quantity" },
+        ],
+        schema: {
+          foreignKeys: [
+            { fromSchema: "public", fromTable: "orders", fromColumns: ["customer_id"], toSchema: "public", toTable: "customers", toColumns: ["id"] },
+            { fromSchema: "public", fromTable: "order_items", fromColumns: ["order_id"], toSchema: "public", toTable: "orders", toColumns: ["id"] },
+          ],
+          uniqueKeys: [
+            { schema: "public", table: "customers", columns: ["id"] },
+            { schema: "public", table: "orders", columns: ["id"] },
+            { schema: "public", table: "order_items", columns: ["id"] },
+          ],
+        },
         rowCount: 3,
         connectionName: fallbackConnection.name,
         sql: payload.sql,
@@ -347,7 +369,7 @@ function EditorViewPane(props: {
 }
 
 function ResultsView({ result }: { result: QueryResult | null }) {
-  const grouped = useMemo(() => (result ? groupRows(result.rows, result.fields) : []), [result]);
+  const tree = useMemo(() => (result ? buildResultTree(result) : []), [result]);
   if (!result) {
     return <div className="pane empty">Execute a query to see hierarchical results.</div>;
   }
@@ -362,20 +384,26 @@ function ResultsView({ result }: { result: QueryResult | null }) {
         </div>
       </div>
       <div className="result-tree">
-        {grouped.map((group) => (
-          <section className="result-group" key={group.key}>
-            <header className="result-header">{group.parentTitle}</header>
-            <DataTable rows={[group.parent]} />
-            {Object.entries(group.children).map(([childName, rows]) => (
-              <div className="child-table" key={childName}>
-                <h2>{childName}</h2>
-                <DataTable rows={rows} />
-              </div>
-            ))}
-          </section>
-        ))}
+        {tree.map((node) => <ResultNodeView node={node} key={node.id} />)}
       </div>
     </div>
+  );
+}
+
+function ResultNodeView({ node }: { node: ResultNode }) {
+  return (
+    <details className={`result-node ${node.cardinality}`} open>
+      <summary>
+        <span>{node.label}</span>
+        <small>{node.title}</small>
+      </summary>
+      <DataTable rows={[node.row]} />
+      {node.children.length > 0 && (
+        <div className="result-children">
+          {node.children.map((child) => <ResultNodeView node={child} key={child.id} />)}
+        </div>
+      )}
+    </details>
   );
 }
 
@@ -398,41 +426,170 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
   );
 }
 
-function groupRows(rows: Record<string, unknown>[], fields: string[]) {
-  const parentId = fields.find((field) => field === "id" || field.endsWith("_id")) ?? fields[0] ?? "row";
-  const groups = new Map<string, { key: string; parentTitle: string; parent: Record<string, unknown>; children: Record<string, Record<string, unknown>[]> }>();
+type ResultNode = {
+  id: string;
+  label: string;
+  title: string;
+  tableKey: string;
+  rowKey: string;
+  row: Record<string, unknown>;
+  cardinality: "one" | "many";
+  children: ResultNode[];
+  childIds: Set<string>;
+};
 
-  for (const row of rows) {
-    const key = String(row[parentId] ?? groups.size + 1);
-    if (!groups.has(key)) {
-      const parent = Object.fromEntries(fields.filter((field) => !field.includes("__")).map((field) => [field, row[field]]));
-      groups.set(key, {
-        key,
-        parentTitle: `${parentId}: ${key}`,
-        parent,
-        children: {},
-      });
+type TableSelection = {
+  key: string;
+  schema: string;
+  table: string;
+  columns: ResultColumn[];
+};
+
+type TableRow = TableSelection & {
+  row: Record<string, unknown>;
+  rowKey: string;
+};
+
+type Relationship = {
+  parentKey: string;
+  childKey: string;
+  cardinality: "one" | "many";
+};
+
+function buildResultTree(result: QueryResult) {
+  const tables = selectedTables(result.columns);
+  if (!tables.length) {
+    return result.rows.map((row, index) => createNode("row", "row", String(index + 1), row, "one"));
+  }
+
+  const relationships = relationshipsFor(tables, result.schema);
+  const rootKeys = rootTableKeys(tables, relationships);
+  const nodes = new Map<string, ResultNode>();
+  const roots: ResultNode[] = [];
+
+  for (let rowIndex = 0; rowIndex < result.rows.length; rowIndex += 1) {
+    const tableRows = tableRowsFor(result.rows[rowIndex], tables);
+    if (!tableRows.length) {
+      const node = createNode("row", "row", String(rowIndex + 1), result.rows[rowIndex], "one");
+      roots.push(node);
+      continue;
     }
-    const group = groups.get(key)!;
-    const childColumns = fields.filter((field) => field.includes("__"));
-    const prefixes = [...new Set(childColumns.map((field) => field.split("__")[0]))];
-    for (const prefix of prefixes) {
-      const child = Object.fromEntries(
-        childColumns
-          .filter((field) => field.startsWith(`${prefix}__`))
-          .map((field) => [field.replace(`${prefix}__`, ""), row[field]]),
-      );
-      if (Object.values(child).some((value) => value !== null && value !== undefined)) {
-        group.children[prefix] = group.children[prefix] ?? [];
-        const childKey = JSON.stringify(child);
-        if (!group.children[prefix].some((existing) => JSON.stringify(existing) === childKey)) {
-          group.children[prefix].push(child);
-        }
-      }
+
+    const rowRootKeys = rootKeys.filter((key) => tableRows.some((tableRow) => tableRow.key === key));
+    const primaryRoot = rowRootKeys[0] ?? tableRows[0].key;
+    for (const rootKey of rowRootKeys.length ? rowRootKeys : [primaryRoot]) {
+      const rootRow = tableRows.find((tableRow) => tableRow.key === rootKey);
+      if (!rootRow) continue;
+      const root = getOrCreateNode(rootRow, nodes, "one");
+      if (!roots.some((node) => node.id === root.id)) roots.push(root);
+      attachKnownChildren(root, tableRows, relationships, nodes);
+      attachUnknownChildren(root, tableRows, relationships, nodes);
     }
   }
 
-  return [...groups.values()];
+  return roots;
+}
+
+function selectedTables(columns: ResultColumn[]): TableSelection[] {
+  const tables = new Map<string, TableSelection>();
+  for (const column of columns) {
+    const schema = column.schema ?? "__result";
+    const tableName = column.table ?? "row";
+    const key = tableKey(schema, tableName);
+    const table = tables.get(key) ?? { key, schema, table: tableName, columns: [] };
+    table.columns.push(column);
+    tables.set(key, table);
+  }
+  return [...tables.values()];
+}
+
+function relationshipsFor(tables: TableSelection[], schema: SchemaMetadata) {
+  const selected = new Set(tables.map((table) => table.key));
+  return schema.foreignKeys
+    .map((foreignKey) => relationshipFor(foreignKey, schema))
+    .filter((relationship) => selected.has(relationship.parentKey) && selected.has(relationship.childKey));
+}
+
+function relationshipFor(foreignKey: SchemaForeignKey, schema: SchemaMetadata): Relationship {
+  const childKey = tableKey(foreignKey.fromSchema, foreignKey.fromTable);
+  const parentKey = tableKey(foreignKey.toSchema, foreignKey.toTable);
+  const childUnique = schema.uniqueKeys.some(
+    (key) => tableKey(key.schema, key.table) === childKey && key.columns.every((column) => foreignKey.fromColumns.includes(column)),
+  );
+  return { parentKey, childKey, cardinality: childUnique ? "one" : "many" };
+}
+
+function rootTableKeys(tables: TableSelection[], relationships: Relationship[]) {
+  const childKeys = new Set(relationships.map((relationship) => relationship.childKey));
+  const roots = tables.map((table) => table.key).filter((key) => !childKeys.has(key));
+  return roots.length ? roots : [tables[0].key];
+}
+
+function tableRowsFor(row: Record<string, unknown>, tables: TableSelection[]) {
+  return tables.flatMap((table) => {
+    const tableRow = Object.fromEntries(table.columns.map((column) => [column.name, row[column.name]]));
+    if (!Object.values(tableRow).some((value) => value !== null && value !== undefined)) return [];
+    return [{ ...table, row: tableRow, rowKey: stableRowKey(tableRow) }];
+  });
+}
+
+function attachKnownChildren(parent: ResultNode, tableRows: TableRow[], relationships: Relationship[], nodes: Map<string, ResultNode>) {
+  const childRelationships = relationships.filter((relationship) => relationship.parentKey === parent.tableKey);
+  for (const relationship of childRelationships) {
+    const childRow = tableRows.find((tableRow) => tableRow.key === relationship.childKey);
+    if (!childRow) continue;
+    const child = getOrCreateNode(childRow, nodes, relationship.cardinality);
+    attachChild(parent, child);
+    attachKnownChildren(child, tableRows, relationships, nodes);
+  }
+}
+
+function attachUnknownChildren(parent: ResultNode, tableRows: TableRow[], relationships: Relationship[], nodes: Map<string, ResultNode>) {
+  const related = new Set(relationships.flatMap((relationship) => [relationship.parentKey, relationship.childKey]));
+  for (const tableRow of tableRows) {
+    if (tableRow.key === parent.tableKey || related.has(tableRow.key)) continue;
+    attachChild(parent, getOrCreateNode(tableRow, nodes, "one"));
+  }
+}
+
+function getOrCreateNode(tableRow: TableRow, nodes: Map<string, ResultNode>, cardinality: "one" | "many") {
+  const id = `${tableRow.key}:${tableRow.rowKey}`;
+  const existing = nodes.get(id);
+  if (existing) {
+    if (cardinality === "many") existing.cardinality = "many";
+    return existing;
+  }
+  const node = createNode(id, tableRow.key, tableRow.table, tableRow.row, cardinality);
+  nodes.set(id, node);
+  return node;
+}
+
+function createNode(id: string, tableKey: string, label: string, row: Record<string, unknown>, cardinality: "one" | "many"): ResultNode {
+  return {
+    id,
+    label,
+    title: [...new Set(Object.values(row))].map(String).join(" | ") || label,
+    tableKey,
+    rowKey: stableRowKey(row),
+    row,
+    cardinality,
+    children: [],
+    childIds: new Set(),
+  };
+}
+
+function attachChild(parent: ResultNode, child: ResultNode) {
+  if (parent.childIds.has(child.id) || parent.id === child.id) return;
+  parent.childIds.add(child.id);
+  parent.children.push(child);
+}
+
+function stableRowKey(row: Record<string, unknown>) {
+  return JSON.stringify(Object.keys(row).sort().map((key) => [key, row[key]]));
+}
+
+function tableKey(schema: string, table: string) {
+  return `${schema}.${table}`;
 }
 
 function ConnectionModal({ onClose, onSave }: { onClose(): void; onSave(connection: ConnectionInput): void }) {

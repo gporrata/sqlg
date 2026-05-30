@@ -21,11 +21,40 @@ export type ConnectionInput = Omit<Connection, "id" | "hasPassword"> & {
 export type QueryResult = {
   rows: Record<string, unknown>[];
   fields: string[];
+  columns: ResultColumn[];
+  schema: SchemaMetadata;
   rowCount: number;
   connectionName: string;
   sql: string;
   elapsedMs: number;
   executedAt: string;
+};
+
+export type ResultColumn = {
+  name: string;
+  schema?: string;
+  table?: string;
+  column?: string;
+};
+
+export type SchemaForeignKey = {
+  fromSchema: string;
+  fromTable: string;
+  fromColumns: string[];
+  toSchema: string;
+  toTable: string;
+  toColumns: string[];
+};
+
+export type SchemaUniqueKey = {
+  schema: string;
+  table: string;
+  columns: string[];
+};
+
+export type SchemaMetadata = {
+  foreignKeys: SchemaForeignKey[];
+  uniqueKeys: SchemaUniqueKey[];
 };
 
 export type Settings = {

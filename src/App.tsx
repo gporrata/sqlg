@@ -94,7 +94,7 @@ function App() {
       <header className="app-header">
         <div className="brand">
           <Database size={20} />
-          <span>sqlg Electron POC</span>
+          <span>sqlg</span>
         </div>
         <nav className="tabs" aria-label="Main tabs">
           <button className={tab === "connections" ? "active" : ""} onClick={() => setTab("connections")}>

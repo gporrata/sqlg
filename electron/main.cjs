@@ -121,7 +121,7 @@ function createWindow() {
     height: 820,
     minWidth: 920,
     minHeight: 640,
-    title: "sqlg Electron POC",
+    title: "sqlg",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

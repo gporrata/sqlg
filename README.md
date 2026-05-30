@@ -1,4 +1,4 @@
-# sqlg Electron POC
+# sqlg
 
 SQL desktop POC built with Electron, React, CodeMirror, and Node database drivers.
 

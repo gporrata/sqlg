@@ -168,10 +168,9 @@ function App() {
         <SettingsModal
           settings={settings}
           onClose={() => setShowSettingsModal(false)}
-          onSave={async (next) => {
+          onChange={async (next) => {
             const saved = await api.saveSettings(next);
             setSettings(saved);
-            setShowSettingsModal(false);
             setFooter("Settings saved");
           }}
         />
@@ -632,14 +631,12 @@ function ConnectionModal({ onClose, onSave }: { onClose(): void; onSave(connecti
   );
 }
 
-function SettingsModal({ settings, onClose, onSave }: { settings: Settings; onClose(): void; onSave(settings: Settings): void }) {
-  const [draft, setDraft] = useState(settings);
+function SettingsModal({ settings, onClose, onChange }: { settings: Settings; onClose(): void; onChange(settings: Settings): void }) {
   return (
     <Modal title="Settings" onClose={onClose}>
-      <form className="form-grid" onSubmit={(event) => void (event.preventDefault(), onSave(draft))}>
-        <label className="span-2">Theme<select value={draft.theme} onChange={(event) => setDraft({ theme: event.target.value as ThemeName })}>{themeOptions.map((theme) => <option value={theme.value} key={theme.value}>{theme.label}</option>)}</select></label>
-        <div className="modal-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary" type="submit">Save</button></div>
-      </form>
+      <div className="form-grid">
+        <label className="span-2">Theme<select value={settings.theme} onChange={(event) => onChange({ theme: event.target.value as ThemeName })}>{themeOptions.map((theme) => <option value={theme.value} key={theme.value}>{theme.label}</option>)}</select></label>
+      </div>
     </Modal>
   );
 }

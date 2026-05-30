@@ -187,6 +187,13 @@ button:disabled {
   margin-bottom: 10px;
   overflow: hidden;
   background: Canvas;
+  cursor: pointer;
+}
+
+.history-row:hover,
+.history-row:focus-visible {
+  border-color: #2f7d70;
+  outline: none;
 }
 
 .history-meta {

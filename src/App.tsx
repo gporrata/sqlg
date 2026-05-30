@@ -100,6 +100,11 @@ function App() {
     }
   }
 
+  function copyHistorySqlToEditor(sql: string) {
+    setSqlText(sql);
+    setTab("editor");
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -157,7 +162,7 @@ function App() {
           />
         )}
         {tab === "results" && <ResultsView result={result} />}
-        {tab === "history" && <HistoryView activeConnection={activeConnection} history={queryHistory} />}
+        {tab === "history" && <HistoryView activeConnection={activeConnection} history={queryHistory} onSelectQuery={copyHistorySqlToEditor} />}
       </section>
 
       <footer className="footer">
@@ -384,6 +389,16 @@ function EditorViewPane(props: {
     };
   }, [props.settings.theme]);
 
+  useEffect(() => {
+    const view = props.editorRef.current;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    if (current === props.sqlText) return;
+    view.dispatch({
+      changes: { from: 0, to: current.length, insert: props.sqlText },
+    });
+  }, [props.sqlText]);
+
   return (
     <div className="pane editor-pane">
       <div className="pane-toolbar">
@@ -423,7 +438,15 @@ function ResultsView({ result }: { result: QueryResult | null }) {
   );
 }
 
-function HistoryView({ activeConnection, history }: { activeConnection?: Connection; history: QueryHistoryEntry[] }) {
+function HistoryView({
+  activeConnection,
+  history,
+  onSelectQuery,
+}: {
+  activeConnection?: Connection;
+  history: QueryHistoryEntry[];
+  onSelectQuery(sql: string): void;
+}) {
   if (!activeConnection) {
     return <div className="pane empty">Select a connection to see query history.</div>;
   }
@@ -439,7 +462,12 @@ function HistoryView({ activeConnection, history }: { activeConnection?: Connect
       </div>
       <div className="history-list">
         {history.map((entry) => (
-          <article className="history-row" key={entry.id}>
+          <article className="history-row" key={entry.id} role="button" tabIndex={0} onClick={() => onSelectQuery(entry.sql)} onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelectQuery(entry.sql);
+            }
+          }}>
             <div className="history-meta">
               <span className={`history-status ${entry.status}`}>{entry.status}</span>
               <span>{formatDateTime(entry.executedAt)}</span>

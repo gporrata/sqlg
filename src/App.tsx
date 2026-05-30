@@ -89,7 +89,7 @@ function App() {
             Connections
           </button>
           <button className={tab === "editor" ? "active" : ""} onClick={() => setTab("editor")}>
-            SQL Editor
+            SQL
           </button>
           <button className={tab === "results" ? "active" : ""} onClick={() => setTab("results")}>
             Results

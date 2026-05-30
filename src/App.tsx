@@ -4,7 +4,7 @@ import { sql } from "@codemirror/lang-sql";
 import { EditorState } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { Database, Play, Plus, Settings as SettingsIcon, Trash2, X } from "lucide-react";
-import type { Connection, ConnectionInput, QueryResult, ResultColumn, SchemaForeignKey, SchemaMetadata, Settings, TabName, ThemeName } from "./types";
+import type { Connection, ConnectionInput, QueryHistoryEntry, QueryResult, ResultColumn, SchemaForeignKey, SchemaMetadata, Settings, TabName, ThemeName } from "./types";
 
 const themeOptions: { value: ThemeName; label: string }[] = [
   { value: "system", label: "System" },
@@ -23,6 +23,7 @@ function App() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState("");
   const [sqlText, setSqlText] = useState('');
+  const [queryHistory, setQueryHistory] = useState<QueryHistoryEntry[]>([]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [footer, setFooter] = useState("Ready");
   const [settings, setSettings] = useState<Settings>({ theme: "system" });
@@ -51,10 +52,30 @@ function App() {
     document.documentElement.dataset.theme = settings.theme;
   }, [settings.theme]);
 
+  useEffect(() => {
+    if (!activeConnectionId) {
+      setQueryHistory([]);
+      return;
+    }
+    void refreshQueryHistory(activeConnectionId);
+  }, [activeConnectionId]);
+
   async function refreshConnections() {
     const items = await api.listConnections();
     setConnections(items);
-    setActiveConnectionId((current) => current || items[0]?.id || "");
+    setActiveConnectionId((current) => (items.some((item) => item.id === current) ? current : items[0]?.id || ""));
+  }
+
+  async function refreshQueryHistory(connectionId = activeConnectionId) {
+    if (!connectionId) {
+      setQueryHistory([]);
+      return;
+    }
+    try {
+      setQueryHistory(await api.listQueryHistory(connectionId));
+    } catch (error) {
+      setFooter(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function executeCurrentSql() {
@@ -72,8 +93,10 @@ function App() {
       setResult(nextResult);
       setTab("results");
       setFooter(`${nextResult.rowCount} row(s) returned in ${nextResult.elapsedMs}ms`);
+      await refreshQueryHistory(activeConnectionId);
     } catch (error) {
       setFooter(error instanceof Error ? error.message : String(error));
+      await refreshQueryHistory(activeConnectionId);
     }
   }
 
@@ -93,6 +116,9 @@ function App() {
           </button>
           <button className={tab === "results" ? "active" : ""} onClick={() => setTab("results")}>
             Results
+          </button>
+          <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+            History
           </button>
         </nav>
       </header>
@@ -131,6 +157,7 @@ function App() {
           />
         )}
         {tab === "results" && <ResultsView result={result} />}
+        {tab === "history" && <HistoryView activeConnection={activeConnection} history={queryHistory} />}
       </section>
 
       <footer className="footer">
@@ -199,6 +226,21 @@ function createBrowserPreviewApi(): Window["sqlg"] {
       return true;
     },
     async executeQuery(payload) {
+      const startedAt = Date.now();
+      const executedAt = new Date().toISOString();
+      const elapsedMs = 18;
+      const historyEntry: QueryHistoryEntry = {
+        id: `preview-${Date.now()}`,
+        connectionId: payload.connectionId,
+        connectionName: fallbackConnection.name,
+        sql: payload.sql,
+        rowCount: 3,
+        elapsedMs,
+        executedAt,
+        status: "success",
+      };
+      const currentHistory = await this.listQueryHistory(payload.connectionId);
+      localStorage.setItem(`sqlg-preview-history-${payload.connectionId}`, JSON.stringify([historyEntry, ...currentHistory]));
       return {
         rows: [
           { id: 1, name: "Ada Lovelace", email: "ada@example.com", orders__id: 1, orders__order_number: "PG-1001", orders__total: "199.50", items__id: 1, items__sku: "SQL-BOOK", items__quantity: 1 },
@@ -231,9 +273,13 @@ function createBrowserPreviewApi(): Window["sqlg"] {
         rowCount: 3,
         connectionName: fallbackConnection.name,
         sql: payload.sql,
-        elapsedMs: 18,
-        executedAt: new Date().toISOString(),
+        elapsedMs: Math.max(elapsedMs, Date.now() - startedAt),
+        executedAt,
       };
+    },
+    async listQueryHistory(connectionId) {
+      const stored = localStorage.getItem(`sqlg-preview-history-${connectionId}`);
+      return stored ? JSON.parse(stored) : [];
     },
     async getSettings() {
       const stored = localStorage.getItem("sqlg-preview-settings");
@@ -375,6 +421,46 @@ function ResultsView({ result }: { result: QueryResult | null }) {
       </div>
     </div>
   );
+}
+
+function HistoryView({ activeConnection, history }: { activeConnection?: Connection; history: QueryHistoryEntry[] }) {
+  if (!activeConnection) {
+    return <div className="pane empty">Select a connection to see query history.</div>;
+  }
+  return (
+    <div className="pane history-pane">
+      <div className="pane-toolbar">
+        <div>
+          <h1>History</h1>
+          <p>
+            {activeConnection.name} | {history.length} quer{history.length === 1 ? "y" : "ies"}
+          </p>
+        </div>
+      </div>
+      <div className="history-list">
+        {history.map((entry) => (
+          <article className="history-row" key={entry.id}>
+            <div className="history-meta">
+              <span className={`history-status ${entry.status}`}>{entry.status}</span>
+              <span>{formatDateTime(entry.executedAt)}</span>
+              <span>{entry.elapsedMs}ms</span>
+              {entry.status === "success" && <span>{entry.rowCount ?? 0} row(s)</span>}
+            </div>
+            <pre>{entry.sql}</pre>
+            {entry.error && <p className="history-error">{entry.error}</p>}
+          </article>
+        ))}
+        {history.length === 0 && <p className="empty">No queries have been executed for this connection yet.</p>}
+      </div>
+    </div>
+  );
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(new Date(value));
 }
 
 function ResultNodeView({ node }: { node: ResultNode }) {

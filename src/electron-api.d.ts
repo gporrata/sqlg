@@ -1,4 +1,4 @@
-import type { Connection, ConnectionInput, QueryResult, Settings } from "./types";
+import type { Connection, ConnectionInput, QueryHistoryEntry, QueryResult, Settings } from "./types";
 
 declare global {
   interface Window {
@@ -8,6 +8,7 @@ declare global {
       deleteConnection(id: string): Promise<boolean>;
       testConnection(id: string): Promise<boolean>;
       executeQuery(payload: { connectionId: string; sql: string }): Promise<QueryResult>;
+      listQueryHistory(connectionId: string): Promise<QueryHistoryEntry[]>;
       getSettings(): Promise<Settings>;
       saveSettings(settings: Settings): Promise<Settings>;
     };

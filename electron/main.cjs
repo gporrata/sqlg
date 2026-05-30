@@ -16,6 +16,7 @@ function storePath() {
 function emptyStore() {
   return {
     connections: [],
+    queryHistory: [],
     settings: { theme: "system" },
   };
 }
@@ -37,6 +38,18 @@ function writeStore(store) {
 function publicConnection(connection) {
   const { password, ...safe } = connection;
   return { ...safe, hasPassword: Boolean(password) };
+}
+
+function queryHistoryFor(connectionId) {
+  return readStore()
+    .queryHistory.filter((entry) => entry.connectionId === connectionId)
+    .sort((left, right) => new Date(right.executedAt).getTime() - new Date(left.executedAt).getTime());
+}
+
+function addQueryHistoryEntry(entry) {
+  const store = readStore();
+  store.queryHistory = [entry, ...store.queryHistory].slice(0, 1000);
+  writeStore(store);
 }
 
 function findConnection(id) {
@@ -363,6 +376,7 @@ ipcMain.handle("connections:add", (_event, input) => {
 ipcMain.handle("connections:delete", (_event, id) => {
   const store = readStore();
   store.connections = store.connections.filter((item) => item.id !== id);
+  store.queryHistory = store.queryHistory.filter((item) => item.connectionId !== id);
   schemaCache.delete(id);
   writeStore(store);
   return true;
@@ -383,15 +397,42 @@ ipcMain.handle("connections:test", async (_event, id) => {
 ipcMain.handle("query:execute", async (_event, payload) => {
   const connection = findConnection(payload.connectionId);
   const startedAt = Date.now();
-  const result = await executeSql(connection, payload.sql);
-  return {
-    ...result,
+  const executedAt = new Date().toISOString();
+  const baseHistoryEntry = {
+    id: `${payload.connectionId}-${Date.now()}`,
+    connectionId: payload.connectionId,
     connectionName: connection.name,
     sql: payload.sql,
-    elapsedMs: Date.now() - startedAt,
-    executedAt: new Date().toISOString(),
+    executedAt,
   };
+  try {
+    const result = await executeSql(connection, payload.sql);
+    const elapsedMs = Date.now() - startedAt;
+    addQueryHistoryEntry({
+      ...baseHistoryEntry,
+      rowCount: result.rowCount,
+      elapsedMs,
+      status: "success",
+    });
+    return {
+      ...result,
+      connectionName: connection.name,
+      sql: payload.sql,
+      elapsedMs,
+      executedAt,
+    };
+  } catch (error) {
+    addQueryHistoryEntry({
+      ...baseHistoryEntry,
+      elapsedMs: Date.now() - startedAt,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 });
+
+ipcMain.handle("history:list", (_event, connectionId) => queryHistoryFor(connectionId));
 
 ipcMain.handle("settings:get", () => readStore().settings);
 

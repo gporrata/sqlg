@@ -1,6 +1,6 @@
 export type DbType = "postgres" | "mysql";
 export type ThemeName = "system" | "light" | "dark" | "solarized" | "gruvbox" | "winter-solarized" | "ayu-light";
-export type TabName = "connections" | "editor" | "results";
+export type TabName = "connections" | "editor" | "results" | "history";
 
 export type Connection = {
   id: string;
@@ -28,6 +28,18 @@ export type QueryResult = {
   sql: string;
   elapsedMs: number;
   executedAt: string;
+};
+
+export type QueryHistoryEntry = {
+  id: string;
+  connectionId: string;
+  connectionName: string;
+  sql: string;
+  rowCount?: number;
+  elapsedMs: number;
+  executedAt: string;
+  status: "success" | "error";
+  error?: string;
 };
 
 export type ResultColumn = {

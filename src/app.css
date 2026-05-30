@@ -137,6 +137,7 @@ button:disabled {
 }
 
 .connection-list,
+.history-list,
 .result-tree {
   padding: 18px;
   overflow: auto;
@@ -174,6 +175,66 @@ button:disabled {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.history-pane {
+  background: color-mix(in srgb, Canvas 98%, CanvasText);
+}
+
+.history-row {
+  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: Canvas;
+}
+
+.history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: color-mix(in srgb, CanvasText 68%, transparent);
+  font-size: 13px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  background: color-mix(in srgb, Canvas 92%, CanvasText);
+}
+
+.history-status {
+  min-width: 62px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  text-align: center;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.history-status.success {
+  color: #146c43;
+  background: color-mix(in srgb, #2f7d70 18%, Canvas);
+}
+
+.history-status.error {
+  color: #c43b4d;
+  background: color-mix(in srgb, #c43b4d 14%, Canvas);
+}
+
+.history-row pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 13px/1.5 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.history-error {
+  margin: 0;
+  padding: 0 12px 12px;
+  color: #c43b4d;
 }
 
 .icon-button {
@@ -370,6 +431,7 @@ select {
 :root[data-theme="solarized"] .app-header,
 :root[data-theme="solarized"] .connection-row,
 :root[data-theme="solarized"] .modal,
+:root[data-theme="solarized"] .history-row,
 :root[data-theme="solarized"] th {
   background: #073642;
 }
@@ -383,6 +445,7 @@ select {
 :root[data-theme="gruvbox"] .connection-row,
 :root[data-theme="gruvbox"] .modal,
 :root[data-theme="gruvbox"] .result-node,
+:root[data-theme="gruvbox"] .history-row,
 :root[data-theme="gruvbox"] th {
   background: #3c3836;
 }
@@ -421,6 +484,7 @@ select {
 :root[data-theme="winter-solarized"] .connection-row,
 :root[data-theme="winter-solarized"] .modal,
 :root[data-theme="winter-solarized"] .result-node,
+:root[data-theme="winter-solarized"] .history-row,
 :root[data-theme="winter-solarized"] th {
   background: #e5f2f7;
 }
@@ -459,6 +523,7 @@ select {
 :root[data-theme="ayu-light"] .connection-row,
 :root[data-theme="ayu-light"] .modal,
 :root[data-theme="ayu-light"] .result-node,
+:root[data-theme="ayu-light"] .history-row,
 :root[data-theme="ayu-light"] th {
   background: #f3f4f5;
 }

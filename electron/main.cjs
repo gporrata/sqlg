@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const mysql = require("mysql2/promise");
@@ -6,6 +6,8 @@ const { Client } = require("pg");
 
 const isDev = process.env.NODE_ENV !== "production";
 const schemaCache = new Map();
+
+app.setName("sqlg");
 
 function storePath() {
   return path.join(app.getPath("home"), ".config", "sql", "config.json");
@@ -314,6 +316,33 @@ function createWindow() {
   }
 }
 
+function createAppMenu() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "sqlg",
+        submenu: [
+          { role: "about", label: "About sqlg" },
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide", label: "Hide sqlg" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit", label: "Quit sqlg" },
+        ],
+      },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ]),
+  );
+}
+
 ipcMain.handle("connections:list", () => {
   return readStore().connections.map(publicConnection);
 });
@@ -373,7 +402,11 @@ ipcMain.handle("settings:save", (_event, settings) => {
   return store.settings;
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  app.setName("sqlg");
+  createAppMenu();
+  createWindow();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

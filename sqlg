@@ -13,7 +13,17 @@ function run(script, scriptArgs = []) {
   process.exit(result.status ?? 1);
 }
 
+function brandDevelopmentElectronApp() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+  const plist = `${appRoot}/node_modules/electron/dist/Electron.app/Contents/Info.plist`;
+  spawnSync("plutil", ["-replace", "CFBundleName", "-string", "sqlg", plist]);
+  spawnSync("plutil", ["-replace", "CFBundleDisplayName", "-string", "sqlg", plist]);
+}
+
 if (!command) {
+  brandDevelopmentElectronApp();
   const child = spawn(yarn, ["run", "electron:dev"], {
     cwd: appRoot,
     detached: true,

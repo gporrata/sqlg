@@ -11,7 +11,7 @@ const activeQueries = new Map();
 app.setName("sqlg");
 
 function storePath() {
-  return path.join(app.getPath("home"), ".config", "sql", "config.json");
+  return path.join(app.getPath("home"), ".config", "sqlg", "config.json");
 }
 
 function emptyStore() {
@@ -194,14 +194,63 @@ async function loadPostgresSchema(client) {
       att.attnum as column_id,
       nsp.nspname as schema,
       cls.relname as table,
-      att.attname as column
+      att.attname as column,
+      pg_catalog.format_type(att.atttypid, att.atttypmod) as data_type,
+      not att.attnotnull as nullable,
+      pg_get_expr(def.adbin, def.adrelid) as default_value,
+      att.attidentity as identity,
+      att.attgenerated as generated,
+      col_description(cls.oid, att.attnum) as comment
     from pg_attribute att
     join pg_class cls on cls.oid = att.attrelid
     join pg_namespace nsp on nsp.oid = cls.relnamespace
+    left join pg_attrdef def on def.adrelid = att.attrelid and def.adnum = att.attnum
     where att.attnum > 0
       and not att.attisdropped
       and nsp.nspname not in ('pg_catalog', 'information_schema')
       and nsp.nspname not like 'pg_toast%'
+  `);
+  const tableResult = await client.query(`
+    select
+      nsp.nspname as schema,
+      cls.relname as name,
+      case cls.relkind
+        when 'r' then 'table'
+        when 'p' then 'partitioned table'
+        when 'v' then 'view'
+        when 'm' then 'materialized view'
+        when 'f' then 'foreign table'
+        else cls.relkind::text
+      end as table_type,
+      case cls.relpersistence
+        when 'p' then 'permanent'
+        when 'u' then 'unlogged'
+        when 't' then 'temporary'
+        else cls.relpersistence::text
+      end as persistence,
+      greatest(cls.reltuples::bigint, 0) as estimated_rows,
+      obj_description(cls.oid, 'pg_class') as comment
+    from pg_class cls
+    join pg_namespace nsp on nsp.oid = cls.relnamespace
+    where cls.relkind in ('r', 'p', 'v', 'm', 'f')
+      and nsp.nspname not in ('pg_catalog', 'information_schema')
+      and nsp.nspname not like 'pg_toast%'
+    order by nsp.nspname, cls.relname
+  `);
+  const primaryKeyResult = await client.query(`
+    select
+      nsp.nspname as schema,
+      cls.relname as table,
+      array_agg(att.attname order by key.ord) as columns
+    from pg_constraint con
+    join pg_class cls on cls.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = cls.relnamespace
+    join unnest(con.conkey) with ordinality as key(attnum, ord) on true
+    join pg_attribute att on att.attrelid = con.conrelid and att.attnum = key.attnum
+    where con.contype = 'p'
+      and nsp.nspname not in ('pg_catalog', 'information_schema')
+      and nsp.nspname not like 'pg_toast%'
+    group by con.oid, nsp.nspname, cls.relname
   `);
   const columnsById = Object.fromEntries(
     columnResult.rows.map((row) => [`${row.table_id}:${row.column_id}`, { schema: row.schema, table: row.table, column: row.column }]),
@@ -218,6 +267,30 @@ async function loadPostgresSchema(client) {
     })),
     uniqueKeys: uniqueKeyResult.rows.map((row) => ({ schema: row.schema, table: row.table, columns: row.columns })),
     columnsById,
+    tables: tableResult.rows.map((row) => ({
+      schema: row.schema,
+      name: row.name,
+      tableType: row.table_type,
+      characteristics: [
+        `persistence: ${row.persistence}`,
+        `estimated rows: ${row.estimated_rows}`,
+        ...(row.comment ? [`comment: ${row.comment}`] : []),
+      ],
+      columns: columnResult.rows
+        .filter((column) => column.schema === row.schema && column.table === row.name)
+        .map((column) => ({
+          name: column.column,
+          dataType: column.data_type,
+          nullable: Boolean(column.nullable),
+          defaultValue: column.default_value || undefined,
+          extra: [
+            ...(column.identity ? [`identity: ${column.identity}`] : []),
+            ...(column.generated ? [`generated: ${column.generated}`] : []),
+            ...(column.comment ? [`comment: ${column.comment}`] : []),
+          ],
+        })),
+    })),
+    primaryKeys: primaryKeyResult.rows.map((row) => ({ schema: row.schema, table: row.table, columns: row.columns })),
   };
 }
 
@@ -254,6 +327,35 @@ async function loadMysqlSchema(client) {
       and tc.constraint_type in ('PRIMARY KEY', 'UNIQUE')
     order by kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position
   `);
+  const [tables] = await client.query(`
+    select
+      table_schema as \`schema\`,
+      table_name as name,
+      table_type,
+      engine,
+      table_rows,
+      row_format,
+      table_collation,
+      table_comment
+    from information_schema.tables
+    where table_schema = database()
+    order by table_schema, table_name
+  `);
+  const [columns] = await client.query(`
+    select
+      table_schema as \`schema\`,
+      table_name as \`table\`,
+      column_name as name,
+      column_type as data_type,
+      is_nullable,
+      column_default as default_value,
+      column_key,
+      extra,
+      column_comment
+    from information_schema.columns
+    where table_schema = database()
+    order by table_schema, table_name, ordinal_position
+  `);
   const groupedForeignKeys = new Map();
   for (const row of foreignKeys) {
     const key = `${row.from_schema}.${row.from_table}.${row.constraint_name}`;
@@ -270,17 +372,50 @@ async function loadMysqlSchema(client) {
     groupedForeignKeys.set(key, current);
   }
   const groupedUniqueKeys = new Map();
+  const groupedPrimaryKeys = new Map();
   for (const row of uniqueKeys) {
     const key = `${row.schema}.${row.table}.${row.constraint_name}`;
     const current = groupedUniqueKeys.get(key) ?? { schema: row.schema, table: row.table, columns: [] };
     current.columns.push(row.column);
     groupedUniqueKeys.set(key, current);
+    if (row.constraint_name === "PRIMARY") {
+      const primaryKey = `${row.schema}.${row.table}`;
+      const primary = groupedPrimaryKeys.get(primaryKey) ?? { schema: row.schema, table: row.table, columns: [] };
+      primary.columns.push(row.column);
+      groupedPrimaryKeys.set(primaryKey, primary);
+    }
   }
 
   return {
     foreignKeys: [...groupedForeignKeys.values()],
     uniqueKeys: [...groupedUniqueKeys.values()],
     columnsById: {},
+    tables: tables.map((row) => ({
+      schema: row.schema,
+      name: row.name,
+      tableType: String(row.table_type || "table").toLowerCase(),
+      characteristics: [
+        ...(row.engine ? [`engine: ${row.engine}`] : []),
+        ...(row.row_format ? [`row format: ${row.row_format}`] : []),
+        ...(row.table_collation ? [`collation: ${row.table_collation}`] : []),
+        ...(row.table_rows !== null && row.table_rows !== undefined ? [`estimated rows: ${row.table_rows}`] : []),
+        ...(row.table_comment ? [`comment: ${row.table_comment}`] : []),
+      ],
+      columns: columns
+        .filter((column) => column.schema === row.schema && column.table === row.name)
+        .map((column) => ({
+          name: column.name,
+          dataType: column.data_type,
+          nullable: column.is_nullable === "YES",
+          defaultValue: column.default_value ?? undefined,
+          extra: [
+            ...(column.extra ? [column.extra] : []),
+            ...(column.column_key ? [`key: ${column.column_key}`] : []),
+            ...(column.column_comment ? [`comment: ${column.column_comment}`] : []),
+          ],
+        })),
+    })),
+    primaryKeys: [...groupedPrimaryKeys.values()],
   };
 }
 
@@ -295,8 +430,75 @@ async function getSchema(connection, client) {
 
 function publicSchema(schema) {
   return {
-    foreignKeys: schema.foreignKeys,
-    uniqueKeys: schema.uniqueKeys,
+    foreignKeys: schema.foreignKeys.map((foreignKey) => ({
+      ...foreignKey,
+      fromColumns: listValue(foreignKey.fromColumns),
+      toColumns: listValue(foreignKey.toColumns),
+    })),
+    uniqueKeys: schema.uniqueKeys.map((key) => ({
+      ...key,
+      columns: listValue(key.columns),
+    })),
+  };
+}
+
+function columnKey(schema, table, column) {
+  return `${schema}.${table}.${column}`;
+}
+
+function listValue(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (typeof value === "string" && value.startsWith("{") && value.endsWith("}")) {
+    return value.slice(1, -1).split(",").filter(Boolean);
+  }
+  return [value];
+}
+
+function publicConnectionSchema(connection, schema) {
+  const primaryColumns = new Set(
+    (schema.primaryKeys ?? []).flatMap((key) => listValue(key.columns).map((column) => columnKey(key.schema, key.table, column))),
+  );
+  const uniqueColumns = new Set(
+    schema.uniqueKeys
+      .filter((key) => listValue(key.columns).length === 1)
+      .flatMap((key) => listValue(key.columns).map((column) => columnKey(key.schema, key.table, column))),
+  );
+  const foreignColumns = new Map();
+  for (const foreignKey of schema.foreignKeys) {
+    const toColumns = listValue(foreignKey.toColumns);
+    listValue(foreignKey.fromColumns).forEach((fromColumn, index) => {
+      foreignColumns.set(
+        columnKey(foreignKey.fromSchema, foreignKey.fromTable, fromColumn),
+        `${foreignKey.toSchema}.${foreignKey.toTable}.${toColumns[index]}`,
+      );
+    });
+  }
+  const schemas = new Map();
+  for (const table of schema.tables ?? []) {
+    const current = schemas.get(table.schema) ?? { name: table.schema, tables: [] };
+    current.tables.push({
+      ...table,
+      columns: listValue(table.columns).map((column) => {
+        const key = columnKey(table.schema, table.name, column.name);
+        return {
+          ...column,
+          isPrimaryKey: primaryColumns.has(key),
+          isUnique: uniqueColumns.has(key),
+          foreignKey: foreignColumns.get(key),
+        };
+      }),
+    });
+    schemas.set(table.schema, current);
+  }
+  return {
+    provider: connection.type,
+    database: connection.database,
+    schemas: [...schemas.values()],
   };
 }
 
@@ -439,6 +641,18 @@ ipcMain.handle("connections:test", async (_event, id) => {
     }
   });
   return true;
+});
+
+ipcMain.handle("schema:load", async (_event, payload) => {
+  const connectionId = typeof payload === "string" ? payload : payload.connectionId;
+  const connection = findConnection(connectionId);
+  if (payload.refresh) {
+    schemaCache.delete(connection.id);
+  }
+  return withClient(connection, async (client) => {
+    const schema = await getSchema(connection, client);
+    return publicConnectionSchema(connection, schema);
+  });
 });
 
 ipcMain.handle("query:execute", async (_event, payload) => {

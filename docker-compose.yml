@@ -34,7 +34,7 @@ services:
       SQLG_PASSWORD: sqlg
     volumes:
       - .:/workspace:ro
-      - ${HOME}/.config/sql:/root/.config/sql
+      - ${HOME}/.config/sqlg:/root/.config/sqlg
     command: ["sh", "-lc", "corepack enable && ./sqlg add 'Local MySQL' mysql 127.0.0.1:33306/sqlg"]
 
   postgres:
@@ -67,7 +67,7 @@ services:
       SQLG_PASSWORD: sqlg
     volumes:
       - .:/workspace:ro
-      - ${HOME}/.config/sql:/root/.config/sql
+      - ${HOME}/.config/sqlg:/root/.config/sqlg
     command: ["sh", "-lc", "corepack enable && ./sqlg add 'Local Postgres' postgres 127.0.0.1:55432/sqlg"]
 
 volumes:

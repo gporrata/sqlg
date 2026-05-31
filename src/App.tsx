@@ -4,7 +4,7 @@ import { sql } from "@codemirror/lang-sql";
 import { EditorState } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { Database, Play, Plus, Settings as SettingsIcon, Trash2, X } from "lucide-react";
-import type { Connection, ConnectionInput, QueryHistoryEntry, QueryResult, ResultColumn, SchemaForeignKey, SchemaMetadata, Settings, TabName, ThemeName } from "./types";
+import type { Connection, ConnectionInput, ConnectionSchemaMetadata, QueryHistoryEntry, QueryResult, ResultColumn, SchemaForeignKey, SchemaMetadata, SchemaTableMetadata, Settings, TabName, ThemeName } from "./types";
 
 const themeOptions: { value: ThemeName; label: string }[] = [
   { value: "system", label: "System" },
@@ -36,6 +36,8 @@ function App() {
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [activeQuery, setActiveQuery] = useState<QueryRunState | null>(null);
+  const [connectionSchemas, setConnectionSchemas] = useState<Record<string, ConnectionSchemaMetadata>>({});
+  const [schemaStatus, setSchemaStatus] = useState<Record<string, { loading: boolean; error?: string }>>({});
   const editorRef = useRef<EditorView | null>(null);
   const activeQueryRef = useRef<QueryRunState | null>(null);
 
@@ -71,6 +73,7 @@ function App() {
       return;
     }
     void refreshQueryHistory(activeConnectionId);
+    void loadConnectionSchema(activeConnectionId);
   }, [activeConnectionId]);
 
   async function refreshConnections() {
@@ -88,6 +91,22 @@ function App() {
       setQueryHistory(await api.listQueryHistory(connectionId));
     } catch (error) {
       setFooter(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function loadConnectionSchema(connectionId = activeConnectionId, force = false) {
+    if (!connectionId || (!force && connectionSchemas[connectionId])) {
+      return;
+    }
+    setSchemaStatus((current) => ({ ...current, [connectionId]: { loading: true } }));
+    try {
+      const schema = await api.loadConnectionSchema(connectionId, force);
+      setConnectionSchemas((current) => ({ ...current, [connectionId]: schema }));
+      setSchemaStatus((current) => ({ ...current, [connectionId]: { loading: false } }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSchemaStatus((current) => ({ ...current, [connectionId]: { loading: false, error: message } }));
+      setFooter(message);
     }
   }
 
@@ -188,7 +207,10 @@ function App() {
             connections={connections}
             activeConnectionId={activeConnectionId}
             disabled={isQueryRunning}
+            schemas={connectionSchemas}
+            schemaStatus={schemaStatus}
             onSelect={setActiveConnectionId}
+            onRefreshSchema={(id) => loadConnectionSchema(id, true)}
             onAdd={() => setShowConnectionModal(true)}
             onDelete={async (id) => {
               await api.deleteConnection(id);
@@ -288,6 +310,41 @@ function createBrowserPreviewApi(): Window["sqlg"] {
     async testConnection() {
       return true;
     },
+    async loadConnectionSchema() {
+      return {
+        provider: "postgres",
+        database: "sqlg",
+        schemas: [
+          {
+            name: "public",
+            tables: [
+              {
+                schema: "public",
+                name: "customers",
+                tableType: "table",
+                characteristics: ["persistence: permanent", "estimated rows: 2"],
+                columns: [
+                  { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+                  { name: "name", dataType: "text", nullable: false },
+                  { name: "email", dataType: "text", nullable: false, isUnique: true },
+                ],
+              },
+              {
+                schema: "public",
+                name: "orders",
+                tableType: "table",
+                characteristics: ["persistence: permanent", "estimated rows: 3"],
+                columns: [
+                  { name: "id", dataType: "integer", nullable: false, isPrimaryKey: true },
+                  { name: "customer_id", dataType: "integer", nullable: false, foreignKey: "public.customers.id" },
+                  { name: "total", dataType: "numeric(10,2)", nullable: false },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+    },
     async executeQuery(payload) {
       const startedAt = Date.now();
       const executedAt = new Date().toISOString();
@@ -362,7 +419,10 @@ function ConnectionsView(props: {
   connections: Connection[];
   activeConnectionId: string;
   disabled: boolean;
+  schemas: Record<string, ConnectionSchemaMetadata>;
+  schemaStatus: Record<string, { loading: boolean; error?: string }>;
   onSelect(id: string): void;
+  onRefreshSchema(id: string): void;
   onAdd(): void;
   onDelete(id: string): void;
   onTest(id: string): void;
@@ -393,15 +453,96 @@ function ConnectionsView(props: {
             </div>
             <div className="row-actions">
               <button disabled={props.disabled} onClick={(event) => void (event.stopPropagation(), props.onTest(connection.id))}>Test</button>
+              {connection.id === props.activeConnectionId && (
+                <button disabled={props.disabled || props.schemaStatus[connection.id]?.loading} onClick={(event) => void (event.stopPropagation(), props.onRefreshSchema(connection.id))}>Refresh Schema</button>
+              )}
               <button className="icon-button danger" title="Delete" disabled={props.disabled} onClick={(event) => void (event.stopPropagation(), props.onDelete(connection.id))}>
                 <Trash2 size={16} />
               </button>
             </div>
+            {connection.id === props.activeConnectionId && (
+              <ConnectionSchemaTree
+                schema={props.schemas[connection.id]}
+                status={props.schemaStatus[connection.id]}
+              />
+            )}
           </article>
         ))}
         {props.connections.length === 0 && <p className="empty">No connections yet. Add one for the Docker sample databases.</p>}
       </div>
     </div>
+  );
+}
+
+function ConnectionSchemaTree({ schema, status }: { schema?: ConnectionSchemaMetadata; status?: { loading: boolean; error?: string } }) {
+  if (status?.loading) {
+    return <div className="schema-tree schema-state">Loading schema...</div>;
+  }
+  if (status?.error) {
+    return <div className="schema-tree schema-state error">{status.error}</div>;
+  }
+  if (!schema) {
+    return <div className="schema-tree schema-state">Select the connection to load schema metadata.</div>;
+  }
+
+  return (
+    <div className="schema-tree">
+      <details open>
+        <summary>
+          <span>{schema.database}</span>
+          <small>{schema.provider}</small>
+        </summary>
+        <div className="schema-children">
+          {schema.schemas.map((schemaNode) => (
+            <details open key={schemaNode.name}>
+              <summary>
+                <span>{schemaNode.name}</span>
+                <small>
+                  {schemaNode.tables.length} table{schemaNode.tables.length === 1 ? "" : "s"}
+                </small>
+              </summary>
+              <div className="schema-children">
+                {schemaNode.tables.map((table) => <SchemaTableTree table={table} key={`${table.schema}.${table.name}`} />)}
+              </div>
+            </details>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function SchemaTableTree({ table }: { table: SchemaTableMetadata }) {
+  return (
+    <details>
+      <summary>
+        <span>{table.name}</span>
+        <small>{table.tableType}</small>
+      </summary>
+      <div className="schema-children">
+        {table.characteristics.length > 0 && (
+          <div className="schema-characteristics">
+            {table.characteristics.map((characteristic) => <span key={characteristic}>{characteristic}</span>)}
+          </div>
+        )}
+        <ul className="schema-columns">
+          {table.columns.map((column) => (
+            <li key={column.name}>
+              <div>
+                <strong>{column.name}</strong>
+                <code>{column.dataType}</code>
+              </div>
+              <span>{column.nullable ? "nullable" : "not null"}</span>
+              {column.isPrimaryKey && <span>primary key</span>}
+              {column.isUnique && !column.isPrimaryKey && <span>unique</span>}
+              {column.foreignKey && <span>references {column.foreignKey}</span>}
+              {column.defaultValue && <span>default {column.defaultValue}</span>}
+              {column.extra?.map((item) => <span key={item}>{item}</span>)}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
   );
 }
 
@@ -699,8 +840,9 @@ function relationshipsFor(tables: TableSelection[], schema: SchemaMetadata) {
 function relationshipFor(foreignKey: SchemaForeignKey, schema: SchemaMetadata): Relationship {
   const childKey = tableKey(foreignKey.fromSchema, foreignKey.fromTable);
   const parentKey = tableKey(foreignKey.toSchema, foreignKey.toTable);
+  const fromColumns = listValue(foreignKey.fromColumns);
   const childUnique = schema.uniqueKeys.some(
-    (key) => tableKey(key.schema, key.table) === childKey && key.columns.every((column) => foreignKey.fromColumns.includes(column)),
+    (key) => tableKey(key.schema, key.table) === childKey && listValue(key.columns).every((column) => fromColumns.includes(column)),
   );
   return { parentKey, childKey, cardinality: childUnique ? "one" : "many" };
 }
@@ -776,6 +918,12 @@ function stableRowKey(row: Record<string, unknown>) {
 
 function tableKey(schema: string, table: string) {
   return `${schema}.${table}`;
+}
+
+function listValue<T>(value: T[] | T | null | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined) return [];
+  return [value];
 }
 
 function ConnectionModal({ onClose, onSave }: { onClose(): void; onSave(connection: ConnectionInput): void }) {

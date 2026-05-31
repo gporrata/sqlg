@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 function storePath() {
-  return path.join(os.homedir(), ".config", "sql", "config.json");
+  return path.join(os.homedir(), ".config", "sqlg", "config.json");
 }
 
 function emptyStore() {

@@ -69,6 +69,34 @@ export type SchemaMetadata = {
   uniqueKeys: SchemaUniqueKey[];
 };
 
+export type SchemaColumnMetadata = {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  defaultValue?: string;
+  isPrimaryKey?: boolean;
+  isUnique?: boolean;
+  foreignKey?: string;
+  extra?: string[];
+};
+
+export type SchemaTableMetadata = {
+  schema: string;
+  name: string;
+  tableType: string;
+  characteristics: string[];
+  columns: SchemaColumnMetadata[];
+};
+
+export type ConnectionSchemaMetadata = {
+  provider: DbType;
+  database: string;
+  schemas: {
+    name: string;
+    tables: SchemaTableMetadata[];
+  }[];
+};
+
 export type Settings = {
   theme: ThemeName;
 };

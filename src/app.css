@@ -165,6 +165,10 @@ button:disabled {
   cursor: pointer;
 }
 
+.connection-row .schema-tree {
+  grid-column: 1 / -1;
+}
+
 .connection-row.selected {
   border-color: #2f7d70;
   background: color-mix(in srgb, #2f7d70 12%, Canvas);
@@ -180,6 +184,98 @@ button:disabled {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.schema-tree {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  cursor: default;
+}
+
+.schema-tree details {
+  margin-top: 6px;
+}
+
+.schema-tree summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 28px;
+  cursor: pointer;
+}
+
+.schema-tree summary span {
+  display: inline;
+  margin: 0;
+  color: CanvasText;
+  font-weight: 700;
+}
+
+.schema-tree summary small {
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+}
+
+.schema-children {
+  margin-left: 18px;
+  padding-left: 14px;
+  border-left: 2px solid color-mix(in srgb, #2f7d70 42%, transparent);
+}
+
+.schema-characteristics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.schema-characteristics span,
+.schema-columns li > span {
+  display: inline-flex;
+  margin: 0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: color-mix(in srgb, CanvasText 72%, transparent);
+  background: color-mix(in srgb, Canvas 88%, CanvasText);
+  font-size: 12px;
+}
+
+.schema-columns {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.schema-columns li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, Canvas 94%, CanvasText);
+}
+
+.schema-columns li div {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.schema-columns code {
+  color: color-mix(in srgb, CanvasText 72%, transparent);
+  font: 12px/1.4 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.schema-state {
+  color: color-mix(in srgb, CanvasText 64%, transparent);
+}
+
+.schema-state.error {
+  color: #c43b4d;
 }
 
 .history-pane {

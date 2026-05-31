@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("sqlg", {
   addConnection: (connection) => ipcRenderer.invoke("connections:add", connection),
   deleteConnection: (id) => ipcRenderer.invoke("connections:delete", id),
   testConnection: (id) => ipcRenderer.invoke("connections:test", id),
+  loadConnectionSchema: (connectionId, refresh) => ipcRenderer.invoke("schema:load", { connectionId, refresh }),
   executeQuery: (payload) => ipcRenderer.invoke("query:execute", payload),
   cancelQuery: (queryId) => ipcRenderer.invoke("query:cancel", queryId),
   listQueryHistory: (connectionId) => ipcRenderer.invoke("history:list", connectionId),

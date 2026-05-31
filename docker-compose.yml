@@ -32,10 +32,18 @@ services:
     environment:
       SQLG_USERNAME: root
       SQLG_PASSWORD: sqlg
+      SQLG_HOST_USER: ${USER}
     volumes:
       - .:/workspace:ro
       - ${HOME}/.config/sqlg:/root/.config/sqlg
-    command: ["sh", "-lc", "corepack enable && ./sqlg add 'Local MySQL' mysql 127.0.0.1:33306/sqlg"]
+      - /etc/passwd:/host/etc/passwd:ro
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        node scripts/connections.cjs add 'Local MySQL' mysql 127.0.0.1:33306/sqlg
+        node scripts/fix-config-owner.cjs /root/.config/sqlg
 
   postgres:
     image: postgres:16
@@ -65,10 +73,18 @@ services:
     environment:
       SQLG_USERNAME: sqlg
       SQLG_PASSWORD: sqlg
+      SQLG_HOST_USER: ${USER}
     volumes:
       - .:/workspace:ro
       - ${HOME}/.config/sqlg:/root/.config/sqlg
-    command: ["sh", "-lc", "corepack enable && ./sqlg add 'Local Postgres' postgres 127.0.0.1:55432/sqlg"]
+      - /etc/passwd:/host/etc/passwd:ro
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        node scripts/connections.cjs add 'Local Postgres' postgres 127.0.0.1:55432/sqlg
+        node scripts/fix-config-owner.cjs /root/.config/sqlg
 
 volumes:
   sqlg_mysql:

@@ -47,7 +47,6 @@ function App() {
   const [schemaStatus, setSchemaStatus] = useState<Record<string, { loading: boolean; error?: string }>>({});
   const editorRef = useRef<EditorView | null>(null);
   const activeQueryRef = useRef<QueryRunState | null>(null);
-  const nextResultIndexRef = useRef(1);
 
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId);
   const activeResultTabId = resultTabId(tab);
@@ -150,11 +149,10 @@ function App() {
       }
       const nextResultTab: ResultTab = {
         id: queryId,
-        label: `Result ${nextResultIndexRef.current}`,
+        label: resultTabLabel(nextResult),
         result: nextResult,
         pinned: false,
       };
-      nextResultIndexRef.current += 1;
       setResultTabs((current) => [...current.filter((resultTab) => resultTab.pinned), nextResultTab]);
       setTab(resultTabName(nextResultTab.id));
       setFooter(`${nextResult.rowCount} row(s) returned in ${nextResult.elapsedMs}ms`);
@@ -768,6 +766,20 @@ function resultTabName(id: string): ResultTabName {
 
 function resultTabId(tabName: TabName) {
   return tabName.startsWith("result:") ? tabName.slice("result:".length) : null;
+}
+
+function resultTabLabel(result: QueryResult) {
+  return `${topLevelTableName(result)}:${result.rowCount}`;
+}
+
+function topLevelTableName(result: QueryResult) {
+  const tables = selectedTables(result.columns);
+  if (!tables.length) {
+    return "row";
+  }
+  const relationships = relationshipsFor(tables, result.schema);
+  const rootKey = rootTableKeys(tables, relationships)[0];
+  return tables.find((table) => table.key === rootKey)?.table ?? tables[0].table;
 }
 
 function ResultNodeView({ node }: { node: ResultNode }) {

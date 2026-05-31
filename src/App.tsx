@@ -3,8 +3,8 @@ import { basicSetup, EditorView } from "codemirror";
 import { sql } from "@codemirror/lang-sql";
 import { EditorState } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { Database, Play, Plus, Settings as SettingsIcon, Trash2, X } from "lucide-react";
-import type { Connection, ConnectionInput, ConnectionSchemaMetadata, QueryHistoryEntry, QueryResult, ResultColumn, SchemaForeignKey, SchemaMetadata, SchemaTableMetadata, Settings, TabName, ThemeName } from "./types";
+import { Database, Pin, PinOff, Play, Plus, Settings as SettingsIcon, Trash2, X } from "lucide-react";
+import type { Connection, ConnectionInput, ConnectionSchemaMetadata, QueryHistoryEntry, QueryResult, ResultColumn, ResultTabName, SchemaForeignKey, SchemaMetadata, SchemaTableMetadata, Settings, TabName, ThemeName } from "./types";
 
 const themeOptions: { value: ThemeName; label: string }[] = [
   { value: "system", label: "System" },
@@ -24,13 +24,20 @@ type QueryRunState = {
   canceling: boolean;
 };
 
+type ResultTab = {
+  id: string;
+  label: string;
+  result: QueryResult;
+  pinned: boolean;
+};
+
 function App() {
   const [tab, setTab] = useState<TabName>("connections");
   const [connections, setConnections] = useState<Connection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState("");
   const [sqlText, setSqlText] = useState('');
   const [queryHistory, setQueryHistory] = useState<QueryHistoryEntry[]>([]);
-  const [result, setResult] = useState<QueryResult | null>(null);
+  const [resultTabs, setResultTabs] = useState<ResultTab[]>([]);
   const [footer, setFooter] = useState("Ready");
   const [settings, setSettings] = useState<Settings>({ theme: "system" });
   const [showConnectionModal, setShowConnectionModal] = useState(false);
@@ -40,8 +47,11 @@ function App() {
   const [schemaStatus, setSchemaStatus] = useState<Record<string, { loading: boolean; error?: string }>>({});
   const editorRef = useRef<EditorView | null>(null);
   const activeQueryRef = useRef<QueryRunState | null>(null);
+  const nextResultIndexRef = useRef(1);
 
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId);
+  const activeResultTabId = resultTabId(tab);
+  const activeResultTab = activeResultTabId ? resultTabs.find((resultTab) => resultTab.id === activeResultTabId) ?? null : null;
   const isQueryRunning = Boolean(activeQuery);
 
   useEffect(() => {
@@ -138,8 +148,15 @@ function App() {
         await refreshQueryHistory(activeConnectionId);
         return;
       }
-      setResult(nextResult);
-      setTab("results");
+      const nextResultTab: ResultTab = {
+        id: queryId,
+        label: `Result ${nextResultIndexRef.current}`,
+        result: nextResult,
+        pinned: false,
+      };
+      nextResultIndexRef.current += 1;
+      setResultTabs((current) => [...current.filter((resultTab) => resultTab.pinned), nextResultTab]);
+      setTab(resultTabName(nextResultTab.id));
       setFooter(`${nextResult.rowCount} row(s) returned in ${nextResult.elapsedMs}ms`);
       await refreshQueryHistory(activeConnectionId);
     } catch (error) {
@@ -178,6 +195,10 @@ function App() {
     setTab("editor");
   }
 
+  function toggleResultTabPinned(id: string) {
+    setResultTabs((current) => current.map((resultTab) => (resultTab.id === id ? { ...resultTab, pinned: !resultTab.pinned } : resultTab)));
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -192,9 +213,21 @@ function App() {
           <button className={tab === "editor" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("editor")}>
             SQL
           </button>
-          <button className={tab === "results" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("results")}>
-            Results
-          </button>
+          {resultTabs.map((resultTab) => {
+            const tabName = resultTabName(resultTab.id);
+            return (
+              <button
+                className={`${tab === tabName ? "active " : ""}result-tab-button`}
+                disabled={isQueryRunning}
+                key={resultTab.id}
+                title={`${resultTab.label}: ${resultTab.result.rowCount} row(s), ${resultTab.result.elapsedMs}ms`}
+                onClick={() => setTab(tabName)}
+              >
+                <span>{resultTab.label}</span>
+                {resultTab.pinned && <Pin size={13} aria-hidden="true" />}
+              </button>
+            );
+          })}
           <button className={tab === "history" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("history")}>
             History
           </button>
@@ -239,7 +272,7 @@ function App() {
             editorRef={editorRef}
           />
         )}
-        {tab === "results" && <ResultsView result={result} />}
+        {activeResultTabId && <ResultsView resultTab={activeResultTab} onTogglePinned={toggleResultTabPinned} />}
         {tab === "history" && <HistoryView activeConnection={activeConnection} history={queryHistory} onSelectQuery={copyHistorySqlToEditor} />}
       </section>
 
@@ -622,19 +655,31 @@ function EditorViewPane(props: {
   );
 }
 
-function ResultsView({ result }: { result: QueryResult | null }) {
+function ResultsView({ resultTab, onTogglePinned }: { resultTab: ResultTab | null; onTogglePinned(id: string): void }) {
+  const result = resultTab?.result ?? null;
   const tree = useMemo(() => (result ? buildResultTree(result) : []), [result]);
-  if (!result) {
+  if (!resultTab || !result) {
     return <div className="pane empty">Execute a query to see hierarchical results.</div>;
   }
   return (
     <div className="pane results-pane">
       <div className="pane-toolbar">
         <div>
-          <h1>Results</h1>
+          <h1>{resultTab.label}</h1>
           <p>
             {result.connectionName} | {result.rowCount} row(s) | {result.elapsedMs}ms
           </p>
+        </div>
+        <div className="toolbar-actions">
+          <button
+            className={`icon-button pin-toggle ${resultTab.pinned ? "active" : ""}`}
+            title={resultTab.pinned ? "Unpin result tab" : "Pin result tab"}
+            aria-label={resultTab.pinned ? "Unpin result tab" : "Pin result tab"}
+            aria-pressed={resultTab.pinned}
+            onClick={() => onTogglePinned(resultTab.id)}
+          >
+            {resultTab.pinned ? <PinOff size={16} /> : <Pin size={16} />}
+          </button>
         </div>
       </div>
       <div className="result-tree">
@@ -715,6 +760,14 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(new Date(value));
+}
+
+function resultTabName(id: string): ResultTabName {
+  return `result:${id}`;
+}
+
+function resultTabId(tabName: TabName) {
+  return tabName.startsWith("result:") ? tabName.slice("result:".length) : null;
 }
 
 function ResultNodeView({ node }: { node: ResultNode }) {

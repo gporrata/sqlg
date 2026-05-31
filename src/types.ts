@@ -1,6 +1,8 @@
 export type DbType = "postgres" | "mysql";
 export type ThemeName = "system" | "light" | "dark" | "solarized" | "gruvbox" | "winter-solarized" | "ayu-light";
-export type TabName = "connections" | "editor" | "results" | "history";
+export type StaticTabName = "connections" | "editor" | "history";
+export type ResultTabName = `result:${string}`;
+export type TabName = StaticTabName | ResultTabName;
 
 export type Connection = {
   id: string;

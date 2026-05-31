@@ -107,6 +107,11 @@ button:disabled {
   overflow: hidden;
 }
 
+.workspace[aria-busy="true"] {
+  pointer-events: none;
+  user-select: none;
+}
+
 .pane {
   height: 100%;
   display: flex;
@@ -254,6 +259,76 @@ button:disabled {
 
 .danger {
   color: #c43b4d;
+}
+
+.query-overlay {
+  position: fixed;
+  inset: 52px 0 34px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: color-mix(in srgb, Canvas 84%, transparent);
+  backdrop-filter: blur(5px);
+}
+
+.query-overlay h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.query-overlay p {
+  margin: 6px 0 0;
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+}
+
+.query-overlay pre {
+  width: min(620px, calc(100vw - 48px));
+  max-height: 128px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  background: color-mix(in srgb, Canvas 92%, CanvasText);
+  font: 13px/1.5 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.query-overlay button,
+.query-overlay .danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.query-loader {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  display: grid;
+  place-items: center;
+  color: #2f7d70;
+}
+
+.query-loader span {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, #2f7d70 20%, transparent);
+  border-top-color: #2f7d70;
+  animation: query-spin 0.9s linear infinite;
+}
+
+@keyframes query-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .editor-host {

@@ -7,7 +7,8 @@ declare global {
       addConnection(connection: ConnectionInput): Promise<Connection>;
       deleteConnection(id: string): Promise<boolean>;
       testConnection(id: string): Promise<boolean>;
-      executeQuery(payload: { connectionId: string; sql: string }): Promise<QueryResult>;
+      executeQuery(payload: { connectionId: string; sql: string; queryId?: string }): Promise<QueryResult>;
+      cancelQuery(queryId: string): Promise<boolean>;
       listQueryHistory(connectionId: string): Promise<QueryHistoryEntry[]>;
       getSettings(): Promise<Settings>;
       saveSettings(settings: Settings): Promise<Settings>;

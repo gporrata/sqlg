@@ -18,6 +18,12 @@ const themeOptions: { value: ThemeName; label: string }[] = [
 
 const api = window.sqlg ?? createBrowserPreviewApi();
 
+type QueryRunState = {
+  id: string;
+  sql: string;
+  canceling: boolean;
+};
+
 function App() {
   const [tab, setTab] = useState<TabName>("connections");
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -29,9 +35,16 @@ function App() {
   const [settings, setSettings] = useState<Settings>({ theme: "system" });
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [activeQuery, setActiveQuery] = useState<QueryRunState | null>(null);
   const editorRef = useRef<EditorView | null>(null);
+  const activeQueryRef = useRef<QueryRunState | null>(null);
 
   const activeConnection = connections.find((connection) => connection.id === activeConnectionId);
+  const isQueryRunning = Boolean(activeQuery);
+
+  useEffect(() => {
+    activeQueryRef.current = activeQuery;
+  }, [activeQuery]);
 
   useEffect(() => {
     api
@@ -79,6 +92,9 @@ function App() {
   }
 
   async function executeCurrentSql() {
+    if (activeQueryRef.current) {
+      return;
+    }
     if (!activeConnectionId) {
       setFooter("Select a connection before executing SQL");
       return;
@@ -87,16 +103,54 @@ function App() {
     const state = editor?.state;
     const selection = state ? state.sliceDoc(state.selection.main.from, state.selection.main.to).trim() : "";
     const query = selection || editor?.state.doc.toString() || sqlText;
+    const queryId = `${activeConnectionId}-${Date.now()}`;
+    const nextActiveQuery = { id: queryId, sql: query, canceling: false };
+    activeQueryRef.current = nextActiveQuery;
+    setActiveQuery(nextActiveQuery);
     try {
       setFooter("Executing query...");
-      const nextResult = await api.executeQuery({ connectionId: activeConnectionId, sql: query });
+      const nextResult = await api.executeQuery({ connectionId: activeConnectionId, sql: query, queryId });
+      const currentQuery = activeQueryRef.current;
+      if (currentQuery?.id !== queryId) {
+        return;
+      }
+      if (currentQuery.canceling) {
+        setFooter("Query canceled");
+        await refreshQueryHistory(activeConnectionId);
+        return;
+      }
       setResult(nextResult);
       setTab("results");
       setFooter(`${nextResult.rowCount} row(s) returned in ${nextResult.elapsedMs}ms`);
       await refreshQueryHistory(activeConnectionId);
     } catch (error) {
-      setFooter(error instanceof Error ? error.message : String(error));
+      if (activeQueryRef.current?.id === queryId) {
+        setFooter(activeQueryRef.current.canceling ? "Query canceled" : error instanceof Error ? error.message : String(error));
+      }
       await refreshQueryHistory(activeConnectionId);
+    } finally {
+      if (activeQueryRef.current?.id === queryId) {
+        activeQueryRef.current = null;
+        setActiveQuery(null);
+      }
+    }
+  }
+
+  async function cancelActiveQuery() {
+    const query = activeQueryRef.current;
+    if (!query || query.canceling) {
+      return;
+    }
+    const cancelingQuery = { ...query, canceling: true };
+    activeQueryRef.current = cancelingQuery;
+    setActiveQuery(cancelingQuery);
+    setFooter("Canceling query...");
+    try {
+      const canceled = await api.cancelQuery(query.id);
+      setFooter(canceled ? "Query cancellation requested" : "Query is already finishing");
+    } catch (error) {
+      setFooter(error instanceof Error ? error.message : String(error));
+      setActiveQuery((current) => (current?.id === query.id ? { ...current, canceling: false } : current));
     }
   }
 
@@ -113,26 +167,27 @@ function App() {
           <span>sqlg</span>
         </div>
         <nav className="tabs" aria-label="Main tabs">
-          <button className={tab === "connections" ? "active" : ""} onClick={() => setTab("connections")}>
+          <button className={tab === "connections" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("connections")}>
             Connections
           </button>
-          <button className={tab === "editor" ? "active" : ""} onClick={() => setTab("editor")}>
+          <button className={tab === "editor" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("editor")}>
             SQL
           </button>
-          <button className={tab === "results" ? "active" : ""} onClick={() => setTab("results")}>
+          <button className={tab === "results" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("results")}>
             Results
           </button>
-          <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+          <button className={tab === "history" ? "active" : ""} disabled={isQueryRunning} onClick={() => setTab("history")}>
             History
           </button>
         </nav>
       </header>
 
-      <section className="workspace">
+      <section className="workspace" aria-busy={isQueryRunning}>
         {tab === "connections" && (
           <ConnectionsView
             connections={connections}
             activeConnectionId={activeConnectionId}
+            disabled={isQueryRunning}
             onSelect={setActiveConnectionId}
             onAdd={() => setShowConnectionModal(true)}
             onDelete={async (id) => {
@@ -156,6 +211,7 @@ function App() {
             activeConnection={activeConnection}
             sqlText={sqlText}
             settings={settings}
+            isExecuting={isQueryRunning}
             onChange={setSqlText}
             onExecute={executeCurrentSql}
             editorRef={editorRef}
@@ -167,10 +223,12 @@ function App() {
 
       <footer className="footer">
         <span>{footer}</span>
-        <button title="Settings" className="icon-button" onClick={() => setShowSettingsModal(true)}>
+        <button title="Settings" className="icon-button" disabled={isQueryRunning} onClick={() => setShowSettingsModal(true)}>
           <SettingsIcon size={18} />
         </button>
       </footer>
+
+      {activeQuery && <QueryOverlay query={activeQuery} onCancel={cancelActiveQuery} />}
 
       {showConnectionModal && (
         <ConnectionModal
@@ -282,6 +340,9 @@ function createBrowserPreviewApi(): Window["sqlg"] {
         executedAt,
       };
     },
+    async cancelQuery() {
+      return false;
+    },
     async listQueryHistory(connectionId) {
       const stored = localStorage.getItem(`sqlg-preview-history-${connectionId}`);
       return stored ? JSON.parse(stored) : [];
@@ -300,6 +361,7 @@ function createBrowserPreviewApi(): Window["sqlg"] {
 function ConnectionsView(props: {
   connections: Connection[];
   activeConnectionId: string;
+  disabled: boolean;
   onSelect(id: string): void;
   onAdd(): void;
   onDelete(id: string): void;
@@ -309,7 +371,7 @@ function ConnectionsView(props: {
     <div className="pane">
       <div className="pane-toolbar">
         <h1>Connections</h1>
-        <button className="primary" onClick={props.onAdd}>
+        <button className="primary" disabled={props.disabled} onClick={props.onAdd}>
           <Plus size={16} />
           Add Connection
         </button>
@@ -319,7 +381,9 @@ function ConnectionsView(props: {
           <article
             className={`connection-row ${connection.id === props.activeConnectionId ? "selected" : ""}`}
             key={connection.id}
-            onClick={() => props.onSelect(connection.id)}
+            onClick={() => {
+              if (!props.disabled) props.onSelect(connection.id);
+            }}
           >
             <div>
               <strong>{connection.name}</strong>
@@ -328,8 +392,8 @@ function ConnectionsView(props: {
               </span>
             </div>
             <div className="row-actions">
-              <button onClick={(event) => void (event.stopPropagation(), props.onTest(connection.id))}>Test</button>
-              <button className="icon-button danger" title="Delete" onClick={(event) => void (event.stopPropagation(), props.onDelete(connection.id))}>
+              <button disabled={props.disabled} onClick={(event) => void (event.stopPropagation(), props.onTest(connection.id))}>Test</button>
+              <button className="icon-button danger" title="Delete" disabled={props.disabled} onClick={(event) => void (event.stopPropagation(), props.onDelete(connection.id))}>
                 <Trash2 size={16} />
               </button>
             </div>
@@ -345,6 +409,7 @@ function EditorViewPane(props: {
   activeConnection?: Connection;
   sqlText: string;
   settings: Settings;
+  isExecuting: boolean;
   onChange(value: string): void;
   onExecute(): void;
   editorRef: React.MutableRefObject<EditorView | null>;
@@ -406,9 +471,9 @@ function EditorViewPane(props: {
           <h1>SQL Editor</h1>
           <p>{props.activeConnection ? `Using ${props.activeConnection.name}` : "No connection selected"}</p>
         </div>
-        <button className="primary" disabled={!props.activeConnection} onClick={props.onExecute}>
+        <button className="primary" disabled={!props.activeConnection || props.isExecuting} onClick={props.onExecute}>
           <Play size={16} />
-          Execute
+          {props.isExecuting ? "Running" : "Execute"}
         </button>
       </div>
       <div className="editor-host" ref={hostRef} />
@@ -480,6 +545,26 @@ function HistoryView({
         ))}
         {history.length === 0 && <p className="empty">No queries have been executed for this connection yet.</p>}
       </div>
+    </div>
+  );
+}
+
+function QueryOverlay({ query, onCancel }: { query: QueryRunState; onCancel(): void }) {
+  return (
+    <div className="query-overlay" role="status" aria-live="polite">
+      <div className="query-loader" aria-hidden="true">
+        <Database size={42} />
+        <span />
+      </div>
+      <div>
+        <h2>Running query</h2>
+        <p>{query.canceling ? "Canceling..." : "Waiting for the database to return results."}</p>
+      </div>
+      <pre>{query.sql}</pre>
+      <button className="danger" disabled={query.canceling} onClick={onCancel}>
+        <X size={16} />
+        {query.canceling ? "Canceling" : "Cancel Query"}
+      </button>
     </div>
   );
 }

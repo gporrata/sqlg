@@ -6,6 +6,7 @@ const { Client } = require("pg");
 
 const isDev = process.env.NODE_ENV !== "production";
 const schemaCache = new Map();
+const activeQueries = new Map();
 
 app.setName("sqlg");
 
@@ -106,6 +107,42 @@ async function withClient(connection, run) {
   await client.connect();
   try {
     return await run(client);
+  } finally {
+    await client.end();
+  }
+}
+
+function postgresConnectionOptions(connection) {
+  return {
+    host: connection.host,
+    port: connection.port,
+    database: connection.database,
+    user: connection.user,
+    password: connection.password,
+  };
+}
+
+async function cancelPostgresQuery(connection, processId) {
+  const client = new Client(postgresConnectionOptions(connection));
+  await client.connect();
+  try {
+    await client.query("select pg_cancel_backend($1)", [processId]);
+  } finally {
+    await client.end();
+  }
+}
+
+async function cancelMysqlQuery(connection, threadId) {
+  const client = await mysql.createConnection({
+    host: connection.host,
+    port: connection.port,
+    database: connection.database,
+    user: connection.user,
+    password: connection.password,
+    multipleStatements: false,
+  });
+  try {
+    await client.query(`KILL QUERY ${Number(threadId)}`);
   } finally {
     await client.end();
   }
@@ -279,12 +316,18 @@ function mysqlColumns(fields) {
   }));
 }
 
-async function executeSql(connection, sql) {
+async function executeSql(connection, sql, queryId) {
   if (!sql.trim()) {
     throw new Error("No SQL to execute");
   }
 
   return withClient(connection, async (client) => {
+    if (queryId) {
+      const cancel = connection.type === "mysql"
+        ? () => cancelMysqlQuery(connection, client.threadId)
+        : () => cancelPostgresQuery(connection, client.processID);
+      activeQueries.set(queryId, { cancel });
+    }
     const schema = await getSchema(connection, client);
     if (connection.type === "mysql") {
       const [rows, fields] = await client.query(sql);
@@ -305,6 +348,10 @@ async function executeSql(connection, sql) {
       schema: publicSchema(schema),
       rowCount: result.rowCount ?? result.rows.length,
     };
+  }).finally(() => {
+    if (queryId) {
+      activeQueries.delete(queryId);
+    }
   });
 }
 
@@ -396,17 +443,18 @@ ipcMain.handle("connections:test", async (_event, id) => {
 
 ipcMain.handle("query:execute", async (_event, payload) => {
   const connection = findConnection(payload.connectionId);
+  const queryId = payload.queryId || `${payload.connectionId}-${Date.now()}`;
   const startedAt = Date.now();
   const executedAt = new Date().toISOString();
   const baseHistoryEntry = {
-    id: `${payload.connectionId}-${Date.now()}`,
+    id: queryId,
     connectionId: payload.connectionId,
     connectionName: connection.name,
     sql: payload.sql,
     executedAt,
   };
   try {
-    const result = await executeSql(connection, payload.sql);
+    const result = await executeSql(connection, payload.sql, queryId);
     const elapsedMs = Date.now() - startedAt;
     addQueryHistoryEntry({
       ...baseHistoryEntry,
@@ -430,6 +478,15 @@ ipcMain.handle("query:execute", async (_event, payload) => {
     });
     throw error;
   }
+});
+
+ipcMain.handle("query:cancel", async (_event, queryId) => {
+  const activeQuery = activeQueries.get(queryId);
+  if (!activeQuery) {
+    return false;
+  }
+  await activeQuery.cancel();
+  return true;
 });
 
 ipcMain.handle("history:list", (_event, connectionId) => queryHistoryFor(connectionId));

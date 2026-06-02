@@ -3,7 +3,7 @@ import { basicSetup, EditorView } from "codemirror";
 import { sql } from "@codemirror/lang-sql";
 import { EditorState } from "@codemirror/state";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { Database, Pin, PinOff, Play, Plus, Settings as SettingsIcon, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Database, Pin, PinOff, Play, Plus, Search, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 import type { Connection, ConnectionInput, ConnectionSchemaMetadata, QueryHistoryEntry, QueryResult, ResultColumn, ResultTabName, SchemaForeignKey, SchemaMetadata, SchemaTableMetadata, Settings, TabName, ThemeName } from "./types";
 
 const themeOptions: { value: ThemeName; label: string }[] = [
@@ -656,6 +656,72 @@ function EditorViewPane(props: {
 function ResultsView({ resultTab, onTogglePinned }: { resultTab: ResultTab | null; onTogglePinned(id: string): void }) {
   const result = resultTab?.result ?? null;
   const tree = useMemo(() => (result ? buildResultTree(result) : []), [result]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [regexEnabled, setRegexEnabled] = useState(false);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const matches = useMemo(
+    () => collectResultMatches(tree, debouncedSearchQuery, { caseSensitive, regexEnabled }),
+    [tree, debouncedSearchQuery, caseSensitive, regexEnabled],
+  );
+  const regexError = useMemo(() => {
+    if (!regexEnabled || !searchQuery) return "";
+    try {
+      new RegExp(searchQuery, caseSensitive ? "g" : "gi");
+      return "";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }, [searchQuery, caseSensitive, regexEnabled]);
+  const displayedMatchIndex = matches.length ? Math.min(activeMatchIndex, matches.length - 1) : 0;
+  const activeMatch = searchOpen ? matches[displayedMatchIndex] ?? null : null;
+  const displayedMatches = searchOpen ? matches : [];
+  const hasSearchText = debouncedSearchQuery.length > 0;
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      setSearchOpen(true);
+      if (searchOpen && searchQuery && matches.length) {
+        setActiveMatchIndex((current) => (current + 1) % matches.length);
+      }
+      window.setTimeout(() => inputRef.current?.focus(), 0);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [searchOpen, searchQuery, matches.length]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearchQuery(searchQuery), 120);
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setActiveMatchIndex(0);
+  }, [resultTab?.id, debouncedSearchQuery, caseSensitive, regexEnabled]);
+
+  useEffect(() => {
+    if (!activeMatch) return;
+    document.querySelector(`[data-result-match-id="${activeMatch.id}"]`)?.scrollIntoView({
+      block: "center",
+      inline: "center",
+    });
+  }, [activeMatch]);
+
+  function goToNextMatch() {
+    if (!matches.length) return;
+    setActiveMatchIndex((current) => (current + 1) % matches.length);
+  }
+
+  function goToPreviousMatch() {
+    if (!matches.length) return;
+    setActiveMatchIndex((current) => (current - 1 + matches.length) % matches.length);
+  }
+
   if (!resultTab || !result) {
     return <div className="pane empty">Execute a query to see hierarchical results.</div>;
   }
@@ -669,6 +735,73 @@ function ResultsView({ resultTab, onTogglePinned }: { resultTab: ResultTab | nul
           </p>
         </div>
         <div className="toolbar-actions">
+          {searchOpen && (
+            <div className={`result-search ${regexError ? "invalid" : ""}`}>
+              <input
+                ref={inputRef}
+                value={searchQuery}
+                placeholder="Find in results"
+                aria-label="Find in results"
+                aria-invalid={Boolean(regexError)}
+                title={regexError || "Find in results"}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (event.shiftKey) goToPreviousMatch();
+                    else goToNextMatch();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setSearchOpen(false);
+                  }
+                }}
+              />
+              <span className="result-search-count" aria-live="polite">
+                {regexError ? "Invalid regex" : hasSearchText && matches.length ? `${displayedMatchIndex + 1} / ${matches.length}` : hasSearchText ? "No results" : "0 / 0"}
+              </span>
+              <button className="icon-button" title="Previous match" disabled={!matches.length || Boolean(regexError)} onClick={goToPreviousMatch}>
+                <ChevronUp size={16} />
+              </button>
+              <button className="icon-button" title="Next match" disabled={!matches.length || Boolean(regexError)} onClick={goToNextMatch}>
+                <ChevronDown size={16} />
+              </button>
+              <button
+                className={`search-toggle ${caseSensitive ? "active" : ""}`}
+                title="Case sensitive"
+                aria-label="Case sensitive"
+                aria-pressed={caseSensitive}
+                onClick={() => setCaseSensitive((current) => !current)}
+              >
+                Aa
+              </button>
+              <button
+                className={`search-toggle ${regexEnabled ? "active" : ""}`}
+                title="Use regular expression"
+                aria-label="Use regular expression"
+                aria-pressed={regexEnabled}
+                onClick={() => setRegexEnabled((current) => !current)}
+              >
+                .*
+              </button>
+              <button className="icon-button" title="Close search" onClick={() => setSearchOpen(false)}>
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          {!searchOpen && (
+            <button
+              className="icon-button"
+              title="Find in results"
+              aria-label="Find in results"
+              onClick={() => {
+                setSearchOpen(true);
+                window.setTimeout(() => inputRef.current?.focus(), 0);
+              }}
+            >
+              <Search size={16} />
+            </button>
+          )}
           <button
             className={`icon-button pin-toggle ${resultTab.pinned ? "active" : ""}`}
             title={resultTab.pinned ? "Unpin result tab" : "Pin result tab"}
@@ -681,7 +814,7 @@ function ResultsView({ resultTab, onTogglePinned }: { resultTab: ResultTab | nul
         </div>
       </div>
       <div className="result-tree">
-        {tree.map((node) => <ResultNodeView node={node} key={node.id} />)}
+        {tree.map((node) => <ResultNodeView activeMatchId={activeMatch?.id ?? ""} matches={displayedMatches} node={node} key={node.id} />)}
       </div>
     </div>
   );
@@ -782,24 +915,24 @@ function topLevelTableName(result: QueryResult) {
   return tables.find((table) => table.key === rootKey)?.table ?? tables[0].table;
 }
 
-function ResultNodeView({ node }: { node: ResultNode }) {
+function ResultNodeView({ activeMatchId, matches, node }: { activeMatchId: string; matches: ResultSearchMatch[]; node: ResultNode }) {
   return (
     <details className={`result-node ${node.cardinality}`} open>
       <summary>
         <span>{node.label}</span>
         <small>{node.title}</small>
       </summary>
-      <DataTable rows={[node.row]} />
+      <DataTable activeMatchId={activeMatchId} matches={matches} nodeId={node.id} rows={[node.row]} />
       {node.children.length > 0 && (
         <div className="result-children">
-          {node.children.map((child) => <ResultNodeView node={child} key={child.id} />)}
+          {node.children.map((child) => <ResultNodeView activeMatchId={activeMatchId} matches={matches} node={child} key={child.id} />)}
         </div>
       )}
     </details>
   );
 }
 
-function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
+function DataTable({ activeMatchId, matches, nodeId, rows }: { activeMatchId: string; matches: ResultSearchMatch[]; nodeId: string; rows: Record<string, unknown>[] }) {
   const columns = Object.keys(rows[0] ?? {});
   if (!rows.length || !columns.length) return <p className="empty compact">No joined rows</p>;
   return (
@@ -810,12 +943,63 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
       <tbody>
         {rows.map((row, index) => (
           <tr key={index}>
-            {columns.map((column) => <td key={column}>{String(row[column] ?? "")}</td>)}
+            {columns.map((column) => (
+              <td key={column}>
+                <HighlightedCell
+                  activeMatchId={activeMatchId}
+                  column={column}
+                  matches={matches}
+                  nodeId={nodeId}
+                  rowIndex={index}
+                  value={String(row[column] ?? "")}
+                />
+              </td>
+            ))}
           </tr>
         ))}
       </tbody>
     </table>
   );
+}
+
+function HighlightedCell({
+  activeMatchId,
+  column,
+  matches,
+  nodeId,
+  rowIndex,
+  value,
+}: {
+  activeMatchId: string;
+  column: string;
+  matches: ResultSearchMatch[];
+  nodeId: string;
+  rowIndex: number;
+  value: string;
+}) {
+  const cellMatches = matches.filter((match) => match.nodeId === nodeId && match.rowIndex === rowIndex && match.column === column);
+  if (!cellMatches.length) return <>{value}</>;
+  const pieces: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const match of cellMatches) {
+    if (match.start > cursor) {
+      pieces.push(value.slice(cursor, match.start));
+    }
+    pieces.push(
+      <mark
+        className={`result-search-hit ${match.id === activeMatchId ? "active" : ""}`}
+        data-result-match-id={match.id}
+        key={match.id}
+      >
+        {value.slice(match.start, match.end)}
+      </mark>,
+    );
+    cursor = match.end;
+  }
+  if (cursor < value.length) {
+    pieces.push(value.slice(cursor));
+  }
+  return <>{pieces}</>;
 }
 
 type ResultNode = {
@@ -847,6 +1031,87 @@ type Relationship = {
   childKey: string;
   cardinality: "one" | "many";
 };
+
+type ResultSearchOptions = {
+  caseSensitive: boolean;
+  regexEnabled: boolean;
+};
+
+type ResultSearchMatch = {
+  id: string;
+  nodeId: string;
+  rowIndex: number;
+  column: string;
+  start: number;
+  end: number;
+};
+
+function collectResultMatches(nodes: ResultNode[], query: string, options: ResultSearchOptions) {
+  if (!query) return [];
+  const matcher = createResultSearchMatcher(query, options);
+  if (!matcher) return [];
+  return nodes
+    .flatMap((node) => collectNodeMatches(node, matcher))
+    .map((match, index) => ({ ...match, id: `result-match-${index}` }));
+}
+
+function collectNodeMatches(node: ResultNode, matcher: (value: string) => Array<{ start: number; end: number }>): Array<Omit<ResultSearchMatch, "id">> {
+  const matches: Array<Omit<ResultSearchMatch, "id">> = [];
+  const rowIndex = 0;
+  for (const [column, rawValue] of Object.entries(node.row)) {
+    const value = String(rawValue ?? "");
+    matcher(value).forEach((range) => {
+      matches.push({
+        nodeId: node.id,
+        rowIndex,
+        column,
+        start: range.start,
+        end: range.end,
+      });
+    });
+  }
+  return [...matches, ...node.children.flatMap((child) => collectNodeMatches(child, matcher))];
+}
+
+function createResultSearchMatcher(query: string, options: ResultSearchOptions) {
+  if (options.regexEnabled) {
+    let expression: RegExp;
+    try {
+      expression = new RegExp(query, options.caseSensitive ? "g" : "gi");
+    } catch {
+      return null;
+    }
+    return (value: string) => regexRanges(value, expression);
+  }
+  const needle = options.caseSensitive ? query : query.toLocaleLowerCase();
+  return (value: string) => {
+    const haystack = options.caseSensitive ? value : value.toLocaleLowerCase();
+    const ranges: Array<{ start: number; end: number }> = [];
+    let fromIndex = 0;
+    while (fromIndex <= haystack.length) {
+      const start = haystack.indexOf(needle, fromIndex);
+      if (start === -1) break;
+      ranges.push({ start, end: start + needle.length });
+      fromIndex = start + Math.max(needle.length, 1);
+    }
+    return ranges;
+  };
+}
+
+function regexRanges(value: string, expression: RegExp) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  expression.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = expression.exec(value))) {
+    const matchText = match[0];
+    if (!matchText.length) {
+      expression.lastIndex += 1;
+      continue;
+    }
+    ranges.push({ start: match.index, end: match.index + matchText.length });
+  }
+  return ranges;
+}
 
 function buildResultTree(result: QueryResult) {
   const tables = selectedTables(result.columns);

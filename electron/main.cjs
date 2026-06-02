@@ -1,14 +1,19 @@
-const { app, BrowserWindow, Menu, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, nativeImage } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const mysql = require("mysql2/promise");
 const { Client } = require("pg");
 
 const isDev = process.env.NODE_ENV !== "production";
+const appIconPath = path.join(__dirname, "..", "assets", "sqlg-icon.png");
 const schemaCache = new Map();
 const activeQueries = new Map();
 
 app.setName("sqlg");
+app.setAppUserModelId("com.sqlg.app");
+if (process.platform === "linux" && typeof app.setDesktopName === "function") {
+  app.setDesktopName("sqlg.desktop");
+}
 
 function storePath() {
   return path.join(app.getPath("home"), ".config", "sqlg", "config.json");
@@ -558,12 +563,14 @@ async function executeSql(connection, sql, queryId) {
 }
 
 function createWindow() {
+  const appIcon = nativeImage.createFromPath(appIconPath);
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 920,
     minHeight: 640,
     title: "sqlg",
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -716,6 +723,9 @@ ipcMain.handle("settings:save", (_event, settings) => {
 
 app.whenReady().then(() => {
   app.setName("sqlg");
+  if (process.platform === "darwin") {
+    app.dock.setIcon(appIconPath);
+  }
   createAppMenu();
   createWindow();
 });

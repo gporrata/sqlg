@@ -1,10 +1,12 @@
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const { resolve } = require("node:path");
 
 const electron = require("electron");
 const appRoot = resolve(__dirname, "..");
+const appIconPath = resolve(appRoot, "assets", "sqlg-icon.png");
 const viteBin = resolve(appRoot, "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite");
 const env = { ...process.env };
 const vitePort = Number(process.env.VITE_PORT || 5173);
@@ -103,8 +105,43 @@ function stop(child) {
   }
 }
 
+function brandDevelopmentElectronApp() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const plist = resolve(appRoot, "node_modules", "electron", "dist", "Electron.app", "Contents", "Info.plist");
+  spawnSync("plutil", ["-replace", "CFBundleName", "-string", "sqlg", plist], { stdio: "ignore" });
+  spawnSync("plutil", ["-replace", "CFBundleDisplayName", "-string", "sqlg", plist], { stdio: "ignore" });
+}
+
+function brandLinuxDesktopEntry() {
+  if (process.platform !== "linux") {
+    return;
+  }
+
+  const dataHome = env.XDG_DATA_HOME || resolve(os.homedir(), ".local", "share");
+  const applicationsDir = resolve(dataHome, "applications");
+  const desktopEntry = [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Name=sqlg",
+    `Exec=${process.execPath} ${resolve(appRoot, "scripts", "electron-dev.cjs")}`,
+    `Icon=${appIconPath}`,
+    "StartupWMClass=sqlg",
+    "Terminal=false",
+    "",
+  ].join("\n");
+
+  fs.mkdirSync(applicationsDir, { recursive: true });
+  fs.writeFileSync(resolve(applicationsDir, "sqlg.desktop"), desktopEntry);
+}
+
 async function main() {
   let vite = null;
+
+  brandDevelopmentElectronApp();
+  brandLinuxDesktopEntry();
 
   try {
     await waitForPort(vitePort, "127.0.0.1", 250);
@@ -121,7 +158,7 @@ async function main() {
   const args = [];
 
   if (process.platform === "linux") {
-    args.push("--no-sandbox", "--disable-vulkan", "--in-process-gpu", "--ozone-platform=x11");
+    args.push("--no-sandbox", "--disable-vulkan", "--in-process-gpu", "--ozone-platform=x11", "--name=sqlg", "--class=sqlg");
   }
 
   args.push(appRoot);

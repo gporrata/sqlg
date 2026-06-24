@@ -154,6 +154,14 @@ async function cancelMysqlQuery(connection, threadId) {
 }
 
 async function loadPostgresSchema(client) {
+  const schemaResult = await client.query(`
+    select schema_name as name
+    from information_schema.schemata
+    where schema_name not in ('pg_catalog', 'information_schema')
+      and schema_name not like 'pg_toast%'
+      and has_schema_privilege(schema_name, 'USAGE')
+    order by schema_name
+  `);
   const foreignKeyResult = await client.query(`
     select
       nsp.nspname as from_schema,
@@ -174,8 +182,10 @@ async function loadPostgresSchema(client) {
     where con.contype = 'f'
       and nsp.nspname not in ('pg_catalog', 'information_schema')
       and nsp.nspname not like 'pg_toast%'
+      and has_schema_privilege(nsp.oid, 'USAGE')
       and fnsp.nspname not in ('pg_catalog', 'information_schema')
       and fnsp.nspname not like 'pg_toast%'
+      and has_schema_privilege(fnsp.oid, 'USAGE')
     group by con.oid, nsp.nspname, cls.relname, fnsp.nspname, fcls.relname
   `);
   const uniqueKeyResult = await client.query(`
@@ -191,6 +201,7 @@ async function loadPostgresSchema(client) {
     where con.contype in ('p', 'u')
       and nsp.nspname not in ('pg_catalog', 'information_schema')
       and nsp.nspname not like 'pg_toast%'
+      and has_schema_privilege(nsp.oid, 'USAGE')
     group by con.oid, nsp.nspname, cls.relname
   `);
   const columnResult = await client.query(`
@@ -214,6 +225,7 @@ async function loadPostgresSchema(client) {
       and not att.attisdropped
       and nsp.nspname not in ('pg_catalog', 'information_schema')
       and nsp.nspname not like 'pg_toast%'
+      and has_schema_privilege(nsp.oid, 'USAGE')
   `);
   const tableResult = await client.query(`
     select
@@ -240,6 +252,7 @@ async function loadPostgresSchema(client) {
     where cls.relkind in ('r', 'p', 'v', 'm', 'f')
       and nsp.nspname not in ('pg_catalog', 'information_schema')
       and nsp.nspname not like 'pg_toast%'
+      and has_schema_privilege(nsp.oid, 'USAGE')
     order by nsp.nspname, cls.relname
   `);
   const primaryKeyResult = await client.query(`
@@ -255,6 +268,7 @@ async function loadPostgresSchema(client) {
     where con.contype = 'p'
       and nsp.nspname not in ('pg_catalog', 'information_schema')
       and nsp.nspname not like 'pg_toast%'
+      and has_schema_privilege(nsp.oid, 'USAGE')
     group by con.oid, nsp.nspname, cls.relname
   `);
   const columnsById = Object.fromEntries(
@@ -262,6 +276,7 @@ async function loadPostgresSchema(client) {
   );
 
   return {
+    schemaNames: schemaResult.rows.map((row) => row.name),
     foreignKeys: foreignKeyResult.rows.map((row) => ({
       fromSchema: row.from_schema,
       fromTable: row.from_table,
@@ -300,6 +315,12 @@ async function loadPostgresSchema(client) {
 }
 
 async function loadMysqlSchema(client) {
+  const [schemas] = await client.query(`
+    select schema_name as name
+    from information_schema.schemata
+    where schema_name not in ('information_schema', 'mysql', 'performance_schema', 'sys')
+    order by schema_name
+  `);
   const [foreignKeys] = await client.query(`
     select
       table_schema as from_schema,
@@ -311,7 +332,7 @@ async function loadMysqlSchema(client) {
       referenced_column_name as to_column,
       ordinal_position
     from information_schema.key_column_usage
-    where table_schema = database()
+    where table_schema not in ('information_schema', 'mysql', 'performance_schema', 'sys')
       and referenced_table_name is not null
     order by table_schema, table_name, constraint_name, ordinal_position
   `);
@@ -328,7 +349,7 @@ async function loadMysqlSchema(client) {
       and kcu.table_schema = tc.table_schema
       and kcu.table_name = tc.table_name
       and kcu.constraint_name = tc.constraint_name
-    where tc.table_schema = database()
+    where tc.table_schema not in ('information_schema', 'mysql', 'performance_schema', 'sys')
       and tc.constraint_type in ('PRIMARY KEY', 'UNIQUE')
     order by kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position
   `);
@@ -343,7 +364,7 @@ async function loadMysqlSchema(client) {
       table_collation,
       table_comment
     from information_schema.tables
-    where table_schema = database()
+    where table_schema not in ('information_schema', 'mysql', 'performance_schema', 'sys')
     order by table_schema, table_name
   `);
   const [columns] = await client.query(`
@@ -358,7 +379,7 @@ async function loadMysqlSchema(client) {
       extra,
       column_comment
     from information_schema.columns
-    where table_schema = database()
+    where table_schema not in ('information_schema', 'mysql', 'performance_schema', 'sys')
     order by table_schema, table_name, ordinal_position
   `);
   const groupedForeignKeys = new Map();
@@ -392,6 +413,7 @@ async function loadMysqlSchema(client) {
   }
 
   return {
+    schemaNames: schemas.map((row) => row.name),
     foreignKeys: [...groupedForeignKeys.values()],
     uniqueKeys: [...groupedUniqueKeys.values()],
     columnsById: {},
@@ -484,6 +506,9 @@ function publicConnectionSchema(connection, schema) {
     });
   }
   const schemas = new Map();
+  for (const schemaName of schema.schemaNames ?? []) {
+    schemas.set(schemaName, { name: schemaName, tables: [] });
+  }
   for (const table of schema.tables ?? []) {
     const current = schemas.get(table.schema) ?? { name: table.schema, tables: [] };
     current.tables.push({
@@ -503,7 +528,12 @@ function publicConnectionSchema(connection, schema) {
   return {
     provider: connection.type,
     database: connection.database,
-    schemas: [...schemas.values()],
+    schemas: [...schemas.values()]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((schemaNode) => ({
+        ...schemaNode,
+        tables: schemaNode.tables.sort((left, right) => left.name.localeCompare(right.name)),
+      })),
   };
 }
 

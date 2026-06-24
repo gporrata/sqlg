@@ -518,27 +518,24 @@ function ConnectionSchemaTree({ schema, status }: { schema?: ConnectionSchemaMet
 
   return (
     <div className="schema-tree">
-      <details open>
-        <summary>
-          <span>{schema.database}</span>
-          <small>{schema.provider}</small>
-        </summary>
-        <div className="schema-children">
-          {schema.schemas.map((schemaNode) => (
-            <details open key={schemaNode.name}>
-              <summary>
-                <span>{schemaNode.name}</span>
-                <small>
-                  {schemaNode.tables.length} table{schemaNode.tables.length === 1 ? "" : "s"}
-                </small>
-              </summary>
-              <div className="schema-children">
-                {schemaNode.tables.map((table) => <SchemaTableTree table={table} key={`${table.schema}.${table.name}`} />)}
-              </div>
-            </details>
-          ))}
-        </div>
-      </details>
+      {schema.schemas.map((schemaNode) => (
+        <details key={schemaNode.name}>
+          <summary>
+            <span>{schemaNode.name}</span>
+            <small>
+              {schemaNode.tables.length} table{schemaNode.tables.length === 1 ? "" : "s"}
+            </small>
+          </summary>
+          {schemaNode.tables.length > 0 ? (
+            <div className="schema-children">
+              {schemaNode.tables.map((table) => <SchemaTableTree table={table} key={`${table.schema}.${table.name}`} />)}
+            </div>
+          ) : (
+            <p className="schema-empty">No tables</p>
+          )}
+        </details>
+      ))}
+      {schema.schemas.length === 0 && <p className="schema-empty">No visible schemas</p>}
     </div>
   );
 }

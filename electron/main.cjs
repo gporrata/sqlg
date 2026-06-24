@@ -738,6 +738,7 @@ ipcMain.handle("query:execute", async (_event, payload) => {
     id: queryId,
     connectionId: payload.connectionId,
     connectionName: connection.name,
+    defaultSchema: connection.defaultSchema,
     sql: payload.sql,
     executedAt,
   };

@@ -188,8 +188,22 @@ function App() {
     }
   }
 
-  function copyHistorySqlToEditor(sql: string) {
-    setSqlText(sql);
+  async function setConnectionDefaultSchema(connectionId: string, schema: string) {
+    const saved = await api.setDefaultSchema(connectionId, schema);
+    setConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+    return saved;
+  }
+
+  async function copyHistorySqlToEditor(entry: QueryHistoryEntry) {
+    if (entry.defaultSchema && activeConnection?.defaultSchema !== entry.defaultSchema) {
+      try {
+        await setConnectionDefaultSchema(entry.connectionId, entry.defaultSchema);
+        setFooter(`Default schema set to ${entry.defaultSchema}`);
+      } catch (error) {
+        setFooter(error instanceof Error ? error.message : String(error));
+      }
+    }
+    setSqlText(entry.sql);
     setTab("editor");
   }
 
@@ -244,8 +258,7 @@ function App() {
             onRefreshSchema={(id) => loadConnectionSchema(id, true)}
             onSetDefaultSchema={async (id, schema) => {
               try {
-                const saved = await api.setDefaultSchema(id, schema);
-                setConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+                await setConnectionDefaultSchema(id, schema);
                 setFooter(`Default schema set to ${schema}`);
               } catch (error) {
                 setFooter(error instanceof Error ? error.message : String(error));
@@ -399,10 +412,12 @@ function createBrowserPreviewApi(): Window["sqlg"] {
       const startedAt = Date.now();
       const executedAt = new Date().toISOString();
       const elapsedMs = 18;
+      const connection = (await this.listConnections()).find((item) => item.id === payload.connectionId) ?? fallbackConnection;
       const historyEntry: QueryHistoryEntry = {
         id: `preview-${Date.now()}`,
         connectionId: payload.connectionId,
-        connectionName: fallbackConnection.name,
+        connectionName: connection.name,
+        defaultSchema: connection.defaultSchema,
         sql: payload.sql,
         rowCount: 3,
         elapsedMs,
@@ -441,7 +456,7 @@ function createBrowserPreviewApi(): Window["sqlg"] {
           ],
         },
         rowCount: 3,
-        connectionName: fallbackConnection.name,
+        connectionName: connection.name,
         sql: payload.sql,
         elapsedMs: Math.max(elapsedMs, Date.now() - startedAt),
         executedAt,
@@ -675,7 +690,11 @@ function EditorViewPane(props: {
       <div className="pane-toolbar">
         <div>
           <h1>SQL Editor</h1>
-          <p>{props.activeConnection ? `Using ${props.activeConnection.name}` : "No connection selected"}</p>
+          <p>
+            {props.activeConnection
+              ? `Using ${props.activeConnection.name}${props.activeConnection.defaultSchema ? `: ${props.activeConnection.defaultSchema}` : ""}`
+              : "No connection selected"}
+          </p>
         </div>
         <button className="primary" disabled={!props.activeConnection || props.isExecuting} onClick={props.onExecute}>
           <Play size={16} />
@@ -861,7 +880,7 @@ function HistoryView({
 }: {
   activeConnection?: Connection;
   history: QueryHistoryEntry[];
-  onSelectQuery(sql: string): void;
+  onSelectQuery(entry: QueryHistoryEntry): void;
 }) {
   if (!activeConnection) {
     return <div className="pane empty">Select a connection to see query history.</div>;
@@ -878,14 +897,15 @@ function HistoryView({
       </div>
       <div className="history-list">
         {history.map((entry) => (
-          <article className="history-row" key={entry.id} role="button" tabIndex={0} onClick={() => onSelectQuery(entry.sql)} onKeyDown={(event) => {
+          <article className="history-row" key={entry.id} role="button" tabIndex={0} onClick={() => onSelectQuery(entry)} onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              onSelectQuery(entry.sql);
+              onSelectQuery(entry);
             }
           }}>
             <div className="history-meta">
               <span className={`history-status ${entry.status}`}>{entry.status}</span>
+              {entry.defaultSchema && <span>schema: {entry.defaultSchema}</span>}
               <span>{formatDateTime(entry.executedAt)}</span>
               <span>{entry.elapsedMs}ms</span>
               {entry.status === "success" && <span>{entry.rowCount ?? 0} row(s)</span>}

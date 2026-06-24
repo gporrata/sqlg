@@ -37,6 +37,7 @@ export type QueryHistoryEntry = {
   id: string;
   connectionId: string;
   connectionName: string;
+  defaultSchema?: string;
   sql: string;
   rowCount?: number;
   elapsedMs: number;

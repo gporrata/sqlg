@@ -80,9 +80,29 @@ function normalizeConnection(input) {
     host: String(input.host || "127.0.0.1").trim(),
     port: Number(input.port || defaultPort),
     database: String(input.database || "sqlg").trim(),
+    defaultSchema: input.defaultSchema ? String(input.defaultSchema).trim() : undefined,
     user: String(input.user || "sqlg").trim(),
     password: String(input.password || ""),
   };
+}
+
+function quotePostgresIdentifier(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function quoteMysqlIdentifier(value) {
+  return `\`${String(value).replace(/`/g, "``")}\``;
+}
+
+async function applyConnectionDefaultSchema(client, connection) {
+  if (!connection.defaultSchema) {
+    return;
+  }
+  if (connection.type === "mysql") {
+    await client.query(`USE ${quoteMysqlIdentifier(connection.defaultSchema)}`);
+    return;
+  }
+  await client.query(`set search_path to ${quotePostgresIdentifier(connection.defaultSchema)}`);
 }
 
 async function withClient(connection, run) {
@@ -566,6 +586,7 @@ async function executeSql(connection, sql, queryId) {
       activeQueries.set(queryId, { cancel });
     }
     const schema = await getSchema(connection, client);
+    await applyConnectionDefaultSchema(client, connection);
     if (connection.type === "mysql") {
       const [rows, fields] = await client.query(sql);
       return {
@@ -666,6 +687,22 @@ ipcMain.handle("connections:delete", (_event, id) => {
   schemaCache.delete(id);
   writeStore(store);
   return true;
+});
+
+ipcMain.handle("connections:set-default-schema", (_event, payload) => {
+  const store = readStore();
+  const schema = String(payload.schema || "").trim();
+  const connectionIndex = store.connections.findIndex((item) => item.id === payload.connectionId);
+  if (connectionIndex === -1) {
+    throw new Error("Connection not found");
+  }
+  if (!schema) {
+    throw new Error("Schema is required");
+  }
+  const connection = { ...store.connections[connectionIndex], defaultSchema: schema };
+  store.connections = store.connections.map((item, index) => (index === connectionIndex ? connection : item));
+  writeStore(store);
+  return publicConnection(connection);
 });
 
 ipcMain.handle("connections:test", async (_event, id) => {

@@ -242,6 +242,15 @@ function App() {
             schemaStatus={schemaStatus}
             onSelect={setActiveConnectionId}
             onRefreshSchema={(id) => loadConnectionSchema(id, true)}
+            onSetDefaultSchema={async (id, schema) => {
+              try {
+                const saved = await api.setDefaultSchema(id, schema);
+                setConnections((current) => current.map((connection) => (connection.id === saved.id ? saved : connection)));
+                setFooter(`Default schema set to ${schema}`);
+              } catch (error) {
+                setFooter(error instanceof Error ? error.message : String(error));
+              }
+            }}
             onAdd={() => setShowConnectionModal(true)}
             onDelete={async (id) => {
               await api.deleteConnection(id);
@@ -337,6 +346,16 @@ function createBrowserPreviewApi(): Window["sqlg"] {
       const current = await this.listConnections();
       localStorage.setItem("sqlg-preview-connections", JSON.stringify(current.filter((item) => item.id !== id)));
       return true;
+    },
+    async setDefaultSchema(connectionId, schema) {
+      const current = await this.listConnections();
+      const next = current.map((connection) => (connection.id === connectionId ? { ...connection, defaultSchema: schema } : connection));
+      localStorage.setItem("sqlg-preview-connections", JSON.stringify(next));
+      const saved = next.find((connection) => connection.id === connectionId);
+      if (!saved) {
+        throw new Error("Connection not found");
+      }
+      return saved;
     },
     async testConnection() {
       return true;
@@ -454,6 +473,7 @@ function ConnectionsView(props: {
   schemaStatus: Record<string, { loading: boolean; error?: string }>;
   onSelect(id: string): void;
   onRefreshSchema(id: string): void;
+  onSetDefaultSchema(id: string, schema: string): void;
   onAdd(): void;
   onDelete(id: string): void;
   onTest(id: string): void;
@@ -480,6 +500,7 @@ function ConnectionsView(props: {
               <strong>{connection.name}</strong>
               <span>
                 {connection.type}://{connection.user}@{connection.host}:{connection.port}/{connection.database}
+                {connection.defaultSchema ? ` · default schema: ${connection.defaultSchema}` : ""}
               </span>
             </div>
             <div className="row-actions">
@@ -493,8 +514,11 @@ function ConnectionsView(props: {
             </div>
             {connection.id === props.activeConnectionId && (
               <ConnectionSchemaTree
+                connectionId={connection.id}
+                defaultSchema={connection.defaultSchema}
                 schema={props.schemas[connection.id]}
                 status={props.schemaStatus[connection.id]}
+                onSetDefaultSchema={props.onSetDefaultSchema}
               />
             )}
           </article>
@@ -505,7 +529,19 @@ function ConnectionsView(props: {
   );
 }
 
-function ConnectionSchemaTree({ schema, status }: { schema?: ConnectionSchemaMetadata; status?: { loading: boolean; error?: string } }) {
+function ConnectionSchemaTree({
+  connectionId,
+  defaultSchema,
+  schema,
+  status,
+  onSetDefaultSchema,
+}: {
+  connectionId: string;
+  defaultSchema?: string;
+  schema?: ConnectionSchemaMetadata;
+  status?: { loading: boolean; error?: string };
+  onSetDefaultSchema(id: string, schema: string): void;
+}) {
   if (status?.loading) {
     return <div className="schema-tree schema-state">Loading schema...</div>;
   }
@@ -519,9 +555,10 @@ function ConnectionSchemaTree({ schema, status }: { schema?: ConnectionSchemaMet
   return (
     <div className="schema-tree">
       {schema.schemas.map((schemaNode) => (
-        <details key={schemaNode.name}>
-          <summary>
+        <details className={schemaNode.name === defaultSchema ? "default-schema" : ""} key={schemaNode.name}>
+          <summary onClick={() => onSetDefaultSchema(connectionId, schemaNode.name)}>
             <span>{schemaNode.name}</span>
+            {schemaNode.name === defaultSchema && <small className="schema-default-label">default</small>}
             <small>
               {schemaNode.tables.length} table{schemaNode.tables.length === 1 ? "" : "s"}
             </small>

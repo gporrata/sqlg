@@ -11,6 +11,7 @@ export type Connection = {
   host: string;
   port: number;
   database: string;
+  defaultSchema?: string;
   user: string;
   hasPassword?: boolean;
 };

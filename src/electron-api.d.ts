@@ -6,6 +6,7 @@ declare global {
       listConnections(): Promise<Connection[]>;
       addConnection(connection: ConnectionInput): Promise<Connection>;
       deleteConnection(id: string): Promise<boolean>;
+      setDefaultSchema(connectionId: string, schema: string): Promise<Connection>;
       testConnection(id: string): Promise<boolean>;
       loadConnectionSchema(connectionId: string, refresh?: boolean): Promise<ConnectionSchemaMetadata>;
       executeQuery(payload: { connectionId: string; sql: string; queryId?: string }): Promise<QueryResult>;

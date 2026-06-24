@@ -515,7 +515,7 @@ function ConnectionsView(props: {
               <strong>{connection.name}</strong>
               <span>
                 {connection.type}://{connection.user}@{connection.host}:{connection.port}/{connection.database}
-                {connection.defaultSchema ? ` · default schema: ${connection.defaultSchema}` : ""}
+                {connection.defaultSchema ? ` · ${connection.defaultSchema}` : ""}
               </span>
             </div>
             <div className="row-actions">
@@ -905,7 +905,7 @@ function HistoryView({
           }}>
             <div className="history-meta">
               <span className={`history-status ${entry.status}`}>{entry.status}</span>
-              {entry.defaultSchema && <span>schema: {entry.defaultSchema}</span>}
+              <span>{entry.defaultSchema || "unknown"}</span>
               <span>{formatDateTime(entry.executedAt)}</span>
               <span>{entry.elapsedMs}ms</span>
               {entry.status === "success" && <span>{entry.rowCount ?? 0} row(s)</span>}

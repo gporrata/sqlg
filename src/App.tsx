@@ -566,10 +566,21 @@ function ConnectionSchemaTree({
   if (!schema) {
     return <div className="schema-tree schema-state">Select the connection to load schema metadata.</div>;
   }
+  const sortedSchemas = [...schema.schemas]
+    .sort(compareByName)
+    .map((schemaNode) => ({
+      ...schemaNode,
+      tables: [...schemaNode.tables]
+        .sort(compareByName)
+        .map((table) => ({
+          ...table,
+          columns: [...table.columns].sort(compareByName),
+        })),
+    }));
 
   return (
     <div className="schema-tree">
-      {schema.schemas.map((schemaNode) => (
+      {sortedSchemas.map((schemaNode) => (
         <details className={schemaNode.name === defaultSchema ? "default-schema" : ""} key={schemaNode.name}>
           <summary onClick={() => onSetDefaultSchema(connectionId, schemaNode.name)}>
             <span>{schemaNode.name}</span>
@@ -587,9 +598,13 @@ function ConnectionSchemaTree({
           )}
         </details>
       ))}
-      {schema.schemas.length === 0 && <p className="schema-empty">No visible schemas</p>}
+      {sortedSchemas.length === 0 && <p className="schema-empty">No visible schemas</p>}
     </div>
   );
+}
+
+function compareByName(left: { name: string }, right: { name: string }) {
+  return left.name.localeCompare(right.name);
 }
 
 function SchemaTableTree({ table }: { table: SchemaTableMetadata }) {

@@ -493,6 +493,10 @@ function columnKey(schema, table, column) {
   return `${schema}.${table}.${column}`;
 }
 
+function compareByName(left, right) {
+  return left.name.localeCompare(right.name);
+}
+
 function listValue(value) {
   if (Array.isArray(value)) {
     return value;
@@ -533,15 +537,17 @@ function publicConnectionSchema(connection, schema) {
     const current = schemas.get(table.schema) ?? { name: table.schema, tables: [] };
     current.tables.push({
       ...table,
-      columns: listValue(table.columns).map((column) => {
-        const key = columnKey(table.schema, table.name, column.name);
-        return {
-          ...column,
-          isPrimaryKey: primaryColumns.has(key),
-          isUnique: uniqueColumns.has(key),
-          foreignKey: foreignColumns.get(key),
-        };
-      }),
+      columns: listValue(table.columns)
+        .map((column) => {
+          const key = columnKey(table.schema, table.name, column.name);
+          return {
+            ...column,
+            isPrimaryKey: primaryColumns.has(key),
+            isUnique: uniqueColumns.has(key),
+            foreignKey: foreignColumns.get(key),
+          };
+        })
+        .sort(compareByName),
     });
     schemas.set(table.schema, current);
   }
@@ -552,7 +558,7 @@ function publicConnectionSchema(connection, schema) {
       .sort((left, right) => left.name.localeCompare(right.name))
       .map((schemaNode) => ({
         ...schemaNode,
-        tables: schemaNode.tables.sort((left, right) => left.name.localeCompare(right.name)),
+        tables: [...schemaNode.tables].sort(compareByName),
       })),
   };
 }

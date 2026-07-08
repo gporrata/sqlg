@@ -8,12 +8,15 @@ const isDev = process.env.NODE_ENV !== "production";
 const appIconPath = path.join(__dirname, "..", "assets", "sqlg-icon.png");
 const schemaCache = new Map();
 const activeQueries = new Map();
+let mainWindow = null;
 
 app.setName("sqlg");
 app.setAppUserModelId("com.sqlg.app");
 if (process.platform === "linux" && typeof app.setDesktopName === "function") {
   app.setDesktopName("sqlg.desktop");
 }
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function storePath() {
   return path.join(app.getPath("home"), ".config", "sqlg", "config.json");
@@ -621,7 +624,7 @@ async function executeSql(connection, sql, queryId) {
 
 function createWindow() {
   const appIcon = nativeImage.createFromPath(appIconPath);
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 920,
@@ -636,10 +639,34 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL("http://localhost:5173");
+    const rendererUrl = process.env.SQLG_RENDERER_URL || `http://127.0.0.1:${process.env.VITE_PORT || 5173}`;
+    mainWindow.loadURL(rendererUrl);
   } else {
-    win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+}
+
+function showMainWindow() {
+  if (!mainWindow) {
+    if (app.isReady()) {
+      createWindow();
+    }
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+
+  mainWindow.focus();
 }
 
 function createAppMenu() {
@@ -795,23 +822,33 @@ ipcMain.handle("settings:save", (_event, settings) => {
   return store.settings;
 });
 
-app.whenReady().then(() => {
-  app.setName("sqlg");
-  if (process.platform === "darwin") {
-    app.dock.setIcon(appIconPath);
-  }
-  createAppMenu();
-  createWindow();
-});
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    showMainWindow();
+  });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  app.whenReady().then(() => {
+    app.setName("sqlg");
+    if (process.platform === "darwin") {
+      app.dock.setIcon(appIconPath);
+    }
+    createAppMenu();
     createWindow();
-  }
-});
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    } else {
+      showMainWindow();
+    }
+  });
+}

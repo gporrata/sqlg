@@ -1,5 +1,6 @@
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
 const net = require("node:net");
 const os = require("node:os");
 const { resolve } = require("node:path");
@@ -9,7 +10,7 @@ const appRoot = resolve(__dirname, "..");
 const appIconPath = resolve(appRoot, "assets", "sqlg-icon.png");
 const viteBin = resolve(appRoot, "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite");
 const env = { ...process.env };
-const vitePort = Number(process.env.VITE_PORT || 5173);
+const preferredVitePort = Number(process.env.SQLG_VITE_PORT || process.env.VITE_PORT || 5173);
 const snapDesktopKeys = [
   "CHROME_DESKTOP",
   "GDK_BACKEND",
@@ -99,6 +100,73 @@ function waitForPort(port, host = "127.0.0.1", timeoutMs = 30000) {
   });
 }
 
+function fetchText(url, timeoutMs = 1000) {
+  return new Promise((resolveReady) => {
+    const request = http.get(url, { timeout: timeoutMs }, (response) => {
+      let body = "";
+
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        resolveReady(body);
+      });
+    });
+
+    request.once("timeout", () => {
+      request.destroy();
+      resolveReady(null);
+    });
+    request.once("error", () => {
+      resolveReady(null);
+    });
+  });
+}
+
+async function isSqlgRendererReady(rendererUrl, timeoutMs = 1000) {
+  const body = await fetchText(rendererUrl, timeoutMs);
+  return typeof body === "string" && body.includes("<title>sqlg</title>") && body.includes("/src/main.tsx");
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
+}
+
+async function waitForSqlgRenderer(rendererUrl, timeoutMs = 30000) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isSqlgRendererReady(rendererUrl)) {
+      return;
+    }
+    await delay(100);
+  }
+
+  throw new Error(`Timed out waiting for sqlg renderer at ${rendererUrl}`);
+}
+
+async function chooseRenderer(preferredPort) {
+  for (let offset = 0; offset < 20; offset += 1) {
+    const port = preferredPort + offset;
+    const rendererUrl = `http://127.0.0.1:${port}`;
+
+    if (await isSqlgRendererReady(rendererUrl, 250)) {
+      return { port, rendererUrl, startVite: false };
+    }
+
+    try {
+      await waitForPort(port, "127.0.0.1", 250);
+    } catch {
+      return { port, rendererUrl, startVite: true };
+    }
+  }
+
+  throw new Error(`Could not find an available Vite port starting at ${preferredPort}`);
+}
+
 function stop(child) {
   if (child && !child.killed) {
     child.kill("SIGTERM");
@@ -143,16 +211,18 @@ async function main() {
   brandDevelopmentElectronApp();
   brandLinuxDesktopEntry();
 
-  try {
-    await waitForPort(vitePort, "127.0.0.1", 250);
-  } catch {
-    vite = spawn(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(vitePort)], {
+  const renderer = await chooseRenderer(preferredVitePort);
+  env.VITE_PORT = String(renderer.port);
+  env.SQLG_RENDERER_URL = renderer.rendererUrl;
+
+  if (renderer.startVite) {
+    vite = spawn(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(renderer.port), "--strictPort"], {
       cwd: appRoot,
       env,
       stdio: "inherit",
     });
 
-    await waitForPort(vitePort);
+    await waitForSqlgRenderer(renderer.rendererUrl);
   }
 
   const args = [];

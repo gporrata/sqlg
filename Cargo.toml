@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/sqlg-core", "crates/sqlg-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

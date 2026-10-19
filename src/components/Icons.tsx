@@ -1,3 +1,5 @@
+import type { LayoutMode } from "../lib/layout";
+
 export function SunIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
@@ -58,7 +60,26 @@ export function LinkIcon() {
   );
 }
 
-export function LayoutGlyph({ mode }: { mode: "all" | "editor-results" | "editor" | "results" }) {
+export function LayoutGlyph({ mode }: { mode: LayoutMode }) {
+  if (mode === "below") {
+    return (
+      <span className="ico split" aria-hidden="true">
+        <b className="f" />
+        <span>
+          <b className="f" />
+          <b className="f" />
+        </span>
+      </span>
+    );
+  }
+  if (mode === "below-only") {
+    return (
+      <span className="ico rows" aria-hidden="true">
+        <b className="f" />
+        <b className="f" />
+      </span>
+    );
+  }
   const on = (part: "s" | "e" | "r") => {
     if (mode === "all") return true;
     if (mode === "editor-results") return part !== "s";
@@ -66,7 +87,7 @@ export function LayoutGlyph({ mode }: { mode: "all" | "editor-results" | "editor
     return part === "r";
   };
   return (
-    <span className="ico" aria-hidden="true">
+    <span className="ico cols" aria-hidden="true">
       <b className={on("s") ? "f" : ""} />
       <b className={on("e") ? "f" : ""} />
       <b className={on("r") ? "f" : ""} />

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { badgeTone } from "../lib/badge";
-import { isDirty, selectedText } from "../lib/dirty";
+import { isDirty, needsFileSave, selectedText } from "../lib/dirty";
 import { executionSummary, formatElapsed } from "../lib/footer";
-import { panes } from "../lib/layout";
+import { clampPane, layoutMode, paneSize, panes, savedColumnWidths } from "../lib/layout";
 import { columnKind, completionSchema, type SchemaSnapshot } from "../lib/schema";
 
 describe("dirty and selection", () => {
@@ -11,6 +11,9 @@ describe("dirty and selection", () => {
     expect(isDirty({ sql: "select 1", filePath: null, savedSql: null })).toBe(true);
     expect(isDirty({ sql: "select 1", filePath: "/a.sql", savedSql: "select 1" })).toBe(false);
     expect(isDirty({ sql: "select 2", filePath: "/a.sql", savedSql: "select 1" })).toBe(true);
+    expect(needsFileSave({ sql: "select 1", filePath: null, savedSql: null })).toBe(false);
+    expect(needsFileSave({ sql: "select 1", filePath: "/a.sql", savedSql: "select 1" })).toBe(false);
+    expect(needsFileSave({ sql: "select 2", filePath: "/a.sql", savedSql: "select 1" })).toBe(true);
   });
 
   it("reads the selected slice", () => {
@@ -42,10 +45,21 @@ describe("badges and layout", () => {
   });
 
   it("shows the panes each chiclet asks for", () => {
-    expect(panes("all")).toEqual({ schema: true, editor: true, results: true });
-    expect(panes("editor-results").schema).toBe(false);
+    expect(panes("all")).toEqual({ schema: true, editor: true, results: true, stack: false });
+    expect(panes("editor-results")).toEqual({ schema: false, editor: true, results: true, stack: false });
+    expect(panes("below")).toEqual({ schema: true, editor: true, results: true, stack: true });
+    expect(panes("below-only")).toEqual({ schema: false, editor: true, results: true, stack: true });
     expect(panes("editor").results).toBe(false);
     expect(panes("results").editor).toBe(false);
+    expect(layoutMode("below-only")).toBe("below-only");
+    expect(layoutMode("nope")).toBe("all");
+    expect(clampPane(40, 160, 500)).toBe(160);
+    expect(clampPane(900, 160, 500)).toBe(500);
+    expect(clampPane(200, 160, 80)).toBe(160);
+    expect(paneSize(undefined, 250, 160)).toBe(250);
+    expect(paneSize(40, 250, 160)).toBe(160);
+    expect(paneSize(9000, 250, 160)).toBe(4000);
+    expect(savedColumnWidths({ name: 180.2, bad: Number.NaN })).toEqual({ name: 180 });
   });
 });
 

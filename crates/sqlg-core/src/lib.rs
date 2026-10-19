@@ -2,6 +2,10 @@
 //! Passwords never live in this crate's on-disk config. Callers put them in
 //! the macOS Keychain (or a test double).
 
+#[cfg(target_os = "macos")]
+mod keychain_macos;
+#[cfg(not(target_os = "macos"))]
+mod keychain_stub;
 mod lint;
 mod paths;
 mod request;

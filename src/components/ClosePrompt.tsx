@@ -9,9 +9,9 @@ export function ClosePrompt() {
     <div className="mask" role="presentation">
       <div className="modal confirm" role="dialog" aria-labelledby="close-title">
         <div className="mt" id="close-title">
-          {many ? "Save changes to the open tabs?" : "Save changes to this tab?"}
+          {many ? "Save changes to the open files?" : "Save changes to this file?"}
         </div>
-        <p className="confirm-copy">Unsaved editor text is kept in the session only when you quit the app.</p>
+        <p className="confirm-copy">This editor was loaded from a file and has been modified.</p>
         <div className="mf">
           <button className="btn" type="button" onClick={() => answer("cancel")}>
             Cancel

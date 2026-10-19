@@ -6,14 +6,19 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::BUNDLE_ID;
 use crate::store::StoreError;
+
+#[cfg(target_os = "macos")]
+use crate::keychain_macos::Keychain;
+#[cfg(not(target_os = "macos"))]
+use crate::keychain_stub::Keychain;
 
 /// Where connection passwords live. Production uses the macOS Keychain.
 /// `SQLG_SECRET_BACKEND=file` is a test-only override so CLI tests do not
 /// touch the login keychain.
 pub enum Secrets {
-    Keyring,
+    Keyring(Keychain),
+    Unavailable(String),
     Memory(Mutex<HashMap<String, String>>),
     File(PathBuf),
 }
@@ -23,7 +28,10 @@ impl Secrets {
         match std::env::var("SQLG_SECRET_BACKEND").as_deref() {
             Ok("file") => Self::File(dir.join("secrets.json")),
             Ok("memory") => Self::memory(),
-            _ => Self::Keyring,
+            _ => match Keychain::user_default() {
+                Ok(keychain) => Self::Keyring(keychain),
+                Err(err) => Self::Unavailable(err.to_string()),
+            },
         }
     }
 
@@ -43,11 +51,8 @@ impl SecretStore for Secrets {
         match self {
             Self::Memory(map) => Ok(map.lock().expect("secrets lock").get(account).cloned()),
             Self::File(path) => Ok(read_file(path)?.get(account).cloned()),
-            Self::Keyring => match keyring_entry(account)?.get_password() {
-                Ok(value) => Ok(Some(value)),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(err) => Err(StoreError::Keychain(err.to_string())),
-            },
+            Self::Keyring(keychain) => keychain.get(account),
+            Self::Unavailable(message) => Err(StoreError::Keychain(message.clone())),
         }
     }
 
@@ -64,9 +69,8 @@ impl SecretStore for Secrets {
                 all.insert(account.to_string(), secret.to_string());
                 write_file(path, &all)
             }
-            Self::Keyring => keyring_entry(account)?
-                .set_password(secret)
-                .map_err(|err| StoreError::Keychain(err.to_string())),
+            Self::Keyring(keychain) => keychain.set(account, secret),
+            Self::Unavailable(message) => Err(StoreError::Keychain(message.clone())),
         }
     }
 
@@ -81,16 +85,10 @@ impl SecretStore for Secrets {
                 all.remove(account);
                 write_file(path, &all)
             }
-            Self::Keyring => match keyring_entry(account)?.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(err) => Err(StoreError::Keychain(err.to_string())),
-            },
+            Self::Keyring(keychain) => keychain.delete(account),
+            Self::Unavailable(message) => Err(StoreError::Keychain(message.clone())),
         }
     }
-}
-
-fn keyring_entry(account: &str) -> Result<keyring::Entry, StoreError> {
-    keyring::Entry::new(BUNDLE_ID, account).map_err(|err| StoreError::Keychain(err.to_string()))
 }
 
 fn read_file(path: &Path) -> Result<HashMap<String, String>, StoreError> {

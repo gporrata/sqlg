@@ -41,6 +41,7 @@ export type Tab = {
   selectionHead: number | null;
   scrollTop: number;
   layout: LayoutMode;
+  columnWidths: Record<string, number>;
   filePath: string | null;
   savedSql: string | null;
   newline: string;
@@ -64,6 +65,7 @@ export type TabSnapshot = {
   selectionHead?: number | null;
   scrollTop?: number;
   layout?: string;
+  columnWidths?: Record<string, number>;
   filePath?: string | null;
   savedSql?: string | null;
   newline?: string;
@@ -80,6 +82,9 @@ export type WindowSnapshot = {
   order?: number;
   activeTab?: string;
   tabs: TabSnapshot[];
+  schemaWidth?: number;
+  editorWidth?: number;
+  editorHeight?: number;
 };
 
 export type SessionDocument = {
@@ -115,6 +120,7 @@ export function makeTab(connectionName: string | null, partial: Partial<Tab> = {
     selectionHead: null,
     scrollTop: 0,
     layout: "all",
+    columnWidths: {},
     filePath: null,
     savedSql: null,
     newline: "\n",

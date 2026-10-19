@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,8 +6,8 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, type CliPending } from "./api";
 import { useApp } from "./store";
 import { makeTab, type QueryEvent, type Tab, type WindowSnapshot } from "./types";
-import { isDirty, selectedText } from "../lib/dirty";
-import { panes } from "../lib/layout";
+import { isDirty, needsFileSave, selectedText } from "../lib/dirty";
+import { layoutMode, paneDefaults, paneMin, paneSize, panes, savedColumnWidths } from "../lib/layout";
 import { claimRun } from "../lib/runLock";
 import { executionSummary } from "../lib/footer";
 import { ClosePrompt } from "../components/ClosePrompt";
@@ -15,11 +15,19 @@ import { ConnectionsModal, type Draft } from "../components/ConnectionsModal";
 import { QueryEditor } from "../components/Editor";
 import { Footer } from "../components/Footer";
 import { Results } from "../components/Results";
-import { SchemaTree } from "../components/SchemaTree";
+import { SchemaTree, type SchemaPhase } from "../components/SchemaTree";
 import { TabStrip } from "../components/TabStrip";
+import { PaneSplit } from "../components/PaneSplit";
 import { Toolbar } from "../components/Toolbar";
+import { WindowEdges } from "../components/WindowEdges";
 
 const filters = [{ name: "SQL", extensions: ["sql"] }];
+let sessionOpen = false;
+
+function schemaErrorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "Could not load schemas";
+  return message.replace(/mysql:\/\/[^/\s]+@/gi, "mysql://");
+}
 
 export default function App() {
   const theme = useApp((state) => state.theme);
@@ -32,6 +40,17 @@ export default function App() {
   const tab = tabs.find((item) => item.id === activeTabId) ?? tabs[0];
   const connection = connections.find((item) => item.name === tab?.connectionName);
   const layout = panes(tab?.layout ?? "all");
+  const [schemaPhase, setSchemaPhase] = useState<Record<string, SchemaPhase>>({});
+  const [schemaRetry, setSchemaRetry] = useState(0);
+  const [sessionReady, setSessionReady] = useState(false);
+  const schemaWidth = useApp((state) => state.schemaWidth);
+  const editorWidth = useApp((state) => state.editorWidth);
+  const editorHeight = useApp((state) => state.editorHeight);
+  const setSchemaWidth = useApp((state) => state.setSchemaWidth);
+  const setEditorWidth = useApp((state) => state.setEditorWidth);
+  const setEditorHeight = useApp((state) => state.setEditorHeight);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const pileRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -40,38 +59,75 @@ export default function App() {
   useEffect(() => {
     let stop = false;
     const unlisten: Array<() => void> = [];
-    void boot(() => stop, unlisten);
-    const timer = window.setInterval(() => void persistWindow(), 30_000);
+    void boot(() => stop, unlisten).then(
+      (ready) => {
+        if (!stop && ready) {
+          sessionOpen = true;
+          setSessionReady(true);
+        }
+      },
+      () => undefined,
+    );
     return () => {
       stop = true;
+      sessionOpen = false;
       unlisten.forEach((fn) => fn());
-      window.clearInterval(timer);
     };
   }, []);
 
   useEffect(() => {
-    if (!tab?.connectionName) return;
-    const name = tab.connectionName;
-    if (schemas[name]) return;
+    if (!sessionReady) return;
+    const timer = window.setInterval(() => void persistWindow(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [sessionReady]);
+
+  useEffect(() => {
+    const name = tab?.connectionName;
+    if (!name || schemas[name]) return;
+    let stale = false;
+    setSchemaPhase((current) => ({ ...current, [name]: { kind: "loading" } }));
     void api.loadSchema(name).then(
-      (schema) => useApp.getState().setSchema(name, schema),
-      () => undefined,
+      (schema) => {
+        if (stale) return;
+        useApp.getState().setSchema(name, schema);
+        setSchemaPhase((current) => {
+          if (!(name in current)) return current;
+          const next = { ...current };
+          delete next[name];
+          return next;
+        });
+      },
+      (error: unknown) => {
+        if (stale) return;
+        setSchemaPhase((current) => ({ ...current, [name]: { kind: "error", message: schemaErrorText(error) } }));
+      },
     );
     void api.ping(name).then(
       () => useApp.getState().setStatus(name, "ok"),
       () => useApp.getState().setStatus(name, "down"),
     );
-  }, [tab?.connectionName, schemas]);
+    return () => {
+      stale = true;
+    };
+  }, [tab?.connectionName, schemas, schemaRetry]);
 
   useEffect(() => {
+    // The first paint is one empty tab. Writing it before loadSession returns replaces saved tabs.
+    if (!sessionReady) return;
     const timer = window.setTimeout(() => void persistWindow(), 400);
     return () => window.clearTimeout(timer);
-  }, [tabs, activeTabId, theme]);
+  }, [sessionReady, tabs, activeTabId, theme, schemaWidth, editorWidth, editorHeight]);
 
   if (!tab) return null;
 
+  const rememberColumn = (name: string, width: number) => {
+    const current = useApp.getState().tabs.find((item) => item.id === tab.id);
+    useApp.getState().updateTab(tab.id, { columnWidths: { ...(current?.columnWidths ?? {}), [name]: width } });
+  };
+
   return (
     <div className="win">
+      <WindowEdges />
       <TabStrip onNew={() => newTab(true)} onClose={(id) => void closeTabs([id])} />
       <Toolbar tab={tab} />
       {notice ? <div className="banner">{notice}</div> : null}
@@ -86,25 +142,116 @@ export default function App() {
           </button>
         </div>
       ) : null}
-      <div className="body">
+      <div className="body" ref={bodyRef}>
         {layout.schema ? (
-          <SchemaTree
-            schema={tab.connectionName ? schemas[tab.connectionName] : undefined}
-            onInsert={(text) => insertText(tab, text)}
+          <div className="pane schema" style={{ width: schemaWidth }}>
+            <SchemaTree
+              key={tab.connectionName ?? "none"}
+              schema={tab.connectionName ? schemas[tab.connectionName] : undefined}
+              defaultSchema={connection?.schema}
+              phase={tab.connectionName ? schemaPhase[tab.connectionName] : undefined}
+              onRetry={() => setSchemaRetry((attempt) => attempt + 1)}
+              onInsert={(text) => insertText(tab, text)}
+            />
+          </div>
+        ) : null}
+        {layout.schema && (layout.editor || layout.results) ? (
+          <PaneSplit
+            axis="x"
+            label="Resize schema"
+            size={() => schemaWidth}
+            min={paneMin.schema}
+            max={() => {
+              const total = bodyRef.current?.clientWidth ?? 1200;
+              const floor = layout.editor && layout.results && !layout.stack ? paneMin.editor + 200 : 220;
+              return total - floor;
+            }}
+            onSize={(next) => {
+              setSchemaWidth(next);
+              if (!(layout.editor && layout.results) || layout.stack) return;
+              const total = bodyRef.current?.clientWidth ?? 0;
+              const room = total - 200 - next;
+              if (useApp.getState().editorWidth > room) setEditorWidth(Math.max(paneMin.editor, room));
+            }}
           />
         ) : null}
-        {layout.editor ? (
-          <QueryEditor
-            key={tab.id}
-            tab={tab}
-            onRun={(sql, from, to) => void runSql(tab, sql, from, to)}
-            onRunStatement={(cursor) => void runStatement(tab, cursor)}
-            onCancel={() => void cancelRun(tab)}
-            onNewTab={() => newTab(true)}
-            onNewWindow={() => void newWindow()}
-          />
-        ) : null}
-        {layout.results ? <Results sections={tab.results} restored={tab.restored && tab.results.length === 0} /> : null}
+        {layout.stack ? (
+          <div className="pile" ref={pileRef}>
+            {layout.editor ? (
+              <div className="pane editor" style={{ height: editorHeight }}>
+                <QueryEditor
+                  key={tab.id}
+                  tab={tab}
+                  onRun={(sql, from, to) => void runSql(tab, sql, from, to)}
+                  onRunStatement={(cursor) => void runStatement(tab, cursor)}
+                  onCancel={() => void cancelRun(tab)}
+                  onNewTab={() => newTab(true)}
+                  onNewWindow={() => void newWindow()}
+                />
+              </div>
+            ) : null}
+            {layout.editor && layout.results ? (
+              <PaneSplit
+                axis="y"
+                label="Resize editor"
+                size={() => editorHeight}
+                min={paneMin.editorHeight}
+                max={() => (pileRef.current?.clientHeight ?? 800) - 160}
+                onSize={setEditorHeight}
+              />
+            ) : null}
+            {layout.results ? (
+              <div className="pane results">
+                <Results
+                  sections={tab.results}
+                  restored={tab.restored && tab.results.length === 0}
+                  columnWidths={tab.columnWidths}
+                  onColumnWidth={rememberColumn}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            {layout.editor ? (
+              <div className={layout.results ? "pane editor" : "pane editor grow"} style={layout.results ? { width: editorWidth } : undefined}>
+                <QueryEditor
+                  key={tab.id}
+                  tab={tab}
+                  onRun={(sql, from, to) => void runSql(tab, sql, from, to)}
+                  onRunStatement={(cursor) => void runStatement(tab, cursor)}
+                  onCancel={() => void cancelRun(tab)}
+                  onNewTab={() => newTab(true)}
+                  onNewWindow={() => void newWindow()}
+                />
+              </div>
+            ) : null}
+            {layout.editor && layout.results ? (
+              <PaneSplit
+                axis="x"
+                label="Resize editor"
+                size={() => editorWidth}
+                min={paneMin.editor}
+                max={() => {
+                  const total = bodyRef.current?.clientWidth ?? 1200;
+                  const schema = layout.schema ? schemaWidth + 12 : 0;
+                  return total - schema - 200;
+                }}
+                onSize={setEditorWidth}
+              />
+            ) : null}
+            {layout.results ? (
+              <div className="pane results">
+                <Results
+                  sections={tab.results}
+                  restored={tab.restored && tab.results.length === 0}
+                  columnWidths={tab.columnWidths}
+                  onColumnWidth={rememberColumn}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
       <Footer tab={tab} connection={connection} theme={theme} onTheme={(next) => void changeTheme(next)} />
       {connectionsOpen ? (
@@ -121,33 +268,64 @@ export default function App() {
   );
 }
 
-async function boot(stopped: () => boolean, unlisten: Array<() => void>) {
-  if (!("__TAURI_INTERNALS__" in window)) return;
+async function boot(stopped: () => boolean, unlisten: Array<() => void>): Promise<boolean> {
+  if (!("__TAURI_INTERNALS__" in window)) return false;
   const win = getCurrentWindow();
   const label = win.label;
   useApp.getState().setLabel(label);
-  const session = await api.loadSession();
-  if (stopped()) return;
+  let session: Awaited<ReturnType<typeof api.loadSession>>;
+  try {
+    session = await api.loadSession();
+  } catch {
+    return false;
+  }
+  if (stopped()) return false;
   const theme = session.theme === "dark" ? "dark" : "light";
   useApp.getState().setTheme(theme);
+  const scratch = await loadScratch();
+  if (stopped()) return false;
   const snapshot = session.windows?.find((window) => window.label === label);
-  if (snapshot?.tabs?.length) {
-    const restored = snapshot.tabs.map((item) =>
+  const scratchTabs = scratch.filter((item) => item.window === label && item.sql);
+  const sessionTabs = snapshot?.tabs ?? [];
+  const sessionHasWork = sessionTabs.some((item) => (item.sql ?? "").length > 0 || item.filePath);
+  const source = !sessionHasWork && scratchTabs.length
+    ? scratchTabs.map((item) => ({
+        id: item.id,
+        connectionName: item.connectionName,
+        sql: item.sql,
+        cursor: item.cursor ?? 0,
+        layout: item.layout,
+        filePath: null,
+        savedSql: null,
+      }))
+    : sessionTabs.map((item) => {
+        if (item.filePath || item.sql) return item;
+        const saved = scratchTabs.find((scratchTab) => scratchTab.id === item.id);
+        return saved?.sql ? { ...item, sql: saved.sql, cursor: saved.cursor ?? item.cursor } : item;
+      });
+  if (source.length) {
+    const restored = source.map((item) =>
       makeTab(item.connectionName ?? null, {
         id: item.id,
         sql: item.sql ?? "",
         cursor: item.cursor ?? 0,
-        selectionAnchor: item.selectionAnchor ?? null,
-        selectionHead: item.selectionHead ?? null,
-        scrollTop: item.scrollTop ?? 0,
-        layout: item.layout === "editor" || item.layout === "results" || item.layout === "editor-results" ? item.layout : "all",
+        selectionAnchor: "selectionAnchor" in item ? item.selectionAnchor ?? null : null,
+        selectionHead: "selectionHead" in item ? item.selectionHead ?? null : null,
+        scrollTop: "scrollTop" in item ? item.scrollTop ?? 0 : 0,
+        layout: layoutMode(item.layout),
+        columnWidths: savedColumnWidths("columnWidths" in item ? item.columnWidths : undefined),
         filePath: item.filePath ?? null,
         savedSql: item.savedSql ?? null,
-        newline: item.newline || "\n",
+        newline: ("newline" in item && item.newline) || "\n",
         restored: true,
       }),
     );
-    useApp.getState().replaceTabs(restored, snapshot.activeTab || restored[0].id);
+    useApp.getState().replaceTabs(restored, snapshot?.activeTab || restored[0].id);
+    useApp.getState().setPaneSizes({
+      schemaWidth: paneSize(snapshot?.schemaWidth, paneDefaults.schema, paneMin.schema),
+      editorWidth: paneSize(snapshot?.editorWidth, paneDefaults.editor, paneMin.editor),
+      editorHeight: paneSize(snapshot?.editorHeight, paneDefaults.editorHeight, paneMin.editorHeight),
+    });
     for (const item of restored) {
       if (item.filePath) void api.watchFile(item.filePath);
     }
@@ -186,6 +364,7 @@ async function boot(stopped: () => boolean, unlisten: Array<() => void>) {
   );
   await takeCli(label);
   await win.setTitle("sqlg");
+  return !stopped();
 }
 
 async function refreshConnections() {
@@ -364,17 +543,8 @@ async function reloadTab(tab: Tab) {
 }
 
 async function closeTabs(ids: string[]) {
-  const tabs = useApp.getState().tabs.filter((tab) => ids.includes(tab.id) && isDirty(tab));
-  if (tabs.length) {
-    const choice = await useApp.getState().askClose(tabs.map((tab) => tab.id));
-    if (choice === "cancel") return;
-    if (choice === "save") {
-      for (const tab of tabs) {
-        const saved = await saveTab(fresh(tab.id) ?? tab, "save");
-        if (!saved) return;
-      }
-    }
-  }
+  const tabs = useApp.getState().tabs.filter((tab) => ids.includes(tab.id) && needsFileSave(tab));
+  if (!(await settleFiles(tabs))) return;
   for (const id of ids) {
     const tab = fresh(id);
     if (tab?.filePath) await api.unwatchFile(tab.filePath);
@@ -383,29 +553,62 @@ async function closeTabs(ids: string[]) {
 }
 
 async function closeWindow() {
-  const dirty = useApp.getState().tabs.filter(isDirty);
-  if (dirty.length) {
-    const choice = await useApp.getState().askClose(dirty.map((tab) => tab.id));
-    if (choice === "cancel") return;
-    if (choice === "save") {
-      for (const tab of dirty) {
-        const saved = await saveTab(fresh(tab.id) ?? tab, "save");
-        if (!saved) return;
-      }
-    }
-  }
-  const label = useApp.getState().label;
-  await api.removeWindow(label);
-  await api.permitClose(label);
+  if (!(await settleFiles(useApp.getState().tabs.filter(needsFileSave)))) return;
+  await persistWindow();
+  await api.permitClose(useApp.getState().label);
 }
 
 async function saveAndAck() {
+  if (!(await settleFiles(useApp.getState().tabs.filter(needsFileSave)))) {
+    try {
+      await api.cancelQuit();
+    } catch {
+      /* the shell is already gone */
+    }
+    return;
+  }
   await persistWindow();
   await api.ackQuit();
 }
 
+async function settleFiles(tabs: Tab[]): Promise<boolean> {
+  if (!tabs.length) return true;
+  try {
+    await api.holdQuit(true);
+  } catch {
+    /* tests and preview have no shell */
+  }
+  const choice = await useApp.getState().askClose(tabs.map((tab) => tab.id));
+  try {
+    await api.holdQuit(false);
+  } catch {
+    /* tests and preview have no shell */
+  }
+  if (choice === "cancel") return false;
+  if (choice === "save") {
+    for (const tab of tabs) {
+      const saved = await saveTab(fresh(tab.id) ?? tab, "save");
+      if (!saved) return false;
+    }
+    return true;
+  }
+  for (const tab of tabs) {
+    const current = fresh(tab.id) ?? tab;
+    useApp.getState().updateTab(current.id, { sql: current.savedSql ?? "", externalRev: current.externalRev + 1 });
+  }
+  return true;
+}
+
+async function loadScratch() {
+  try {
+    return await api.loadScratch();
+  } catch {
+    return [];
+  }
+}
+
 async function persistWindow() {
-  if (!("__TAURI_INTERNALS__" in window)) return;
+  if (!sessionOpen || !("__TAURI_INTERNALS__" in window)) return;
   const state = useApp.getState();
   const win = getCurrentWindow();
   let x = 0;
@@ -434,6 +637,9 @@ async function persistWindow() {
     fullscreen,
     order: 0,
     activeTab: state.activeTabId,
+    schemaWidth: state.schemaWidth,
+    editorWidth: state.editorWidth,
+    editorHeight: state.editorHeight,
     tabs: state.tabs.map((tab) => ({
       id: tab.id,
       connectionName: tab.connectionName,
@@ -443,6 +649,7 @@ async function persistWindow() {
       selectionHead: tab.selectionHead,
       scrollTop: tab.scrollTop,
       layout: tab.layout,
+      columnWidths: savedColumnWidths(tab.columnWidths),
       filePath: tab.filePath,
       savedSql: tab.savedSql,
       newline: tab.newline,
@@ -451,6 +658,18 @@ async function persistWindow() {
   };
   try {
     await api.upsertWindow(snapshot);
+    await api.saveScratch(
+      state.label,
+      state.tabs
+        .filter((tab) => !tab.filePath)
+        .map((tab) => ({
+          id: tab.id,
+          connectionName: tab.connectionName,
+          sql: tab.sql,
+          cursor: tab.cursor,
+          layout: tab.layout,
+        })),
+    );
   } catch {
     /* ignore when the shell is not up */
   }

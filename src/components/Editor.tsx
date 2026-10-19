@@ -5,7 +5,7 @@ import { MySQL, sql } from "@codemirror/lang-sql";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { linter, lintGutter, type Diagnostic as CmDiagnostic } from "@codemirror/lint";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
+import { Decoration, EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers, tooltips } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { api, type Diagnostic } from "../app/api";
 import { useApp } from "../app/store";
@@ -92,6 +92,7 @@ export function QueryEditor({
           drawSelection(),
           history(),
           lintGutter(),
+          tooltips({ parent: document.body }),
           flashField,
           schemaCompartment.of(sqlExtension()),
           themeCompartment.of(syntaxHighlighting(document.documentElement.dataset.theme === "dark" ? darkHl : lightHl)),

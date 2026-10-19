@@ -197,16 +197,30 @@ pub fn request_quit(app: &AppHandle) {
     state
         .quit_acks
         .store(0, std::sync::atomic::Ordering::SeqCst);
+    state
+        .quit_hold
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     let _ = app.emit("prepare-quit", ());
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        let state = handle.state::<AppState>();
-        if !state
-            .allow_close
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
+        loop {
+            let state = handle.state::<AppState>();
+            if !state.quitting.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            if state.allow_close.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            if state.quit_hold.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                continue;
+            }
+            state
+                .allow_close
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             handle.exit(0);
+            return;
         }
     });
 }

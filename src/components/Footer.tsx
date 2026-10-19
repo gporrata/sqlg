@@ -13,14 +13,26 @@ export function Footer({
   theme: "light" | "dark";
   onTheme: (theme: "light" | "dark") => void;
 }) {
-  const host = connection ? `${connection.user}@${connection.host}:${connection.port}` : "";
+  const host = connection ? `${connection.name} · ${connection.host}:${connection.port}` : "";
   return (
     <footer className="footer">
       <div className="theme">
-        <button type="button" className={theme === "light" ? "on" : ""} aria-label="Light" onClick={() => onTheme("light")}>
+        <button
+          type="button"
+          className={theme === "light" ? "on" : ""}
+          aria-label="Light"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => onTheme("light")}
+        >
           <SunIcon />
         </button>
-        <button type="button" className={theme === "dark" ? "on" : ""} aria-label="Dark" onClick={() => onTheme("dark")}>
+        <button
+          type="button"
+          className={theme === "dark" ? "on" : ""}
+          aria-label="Dark"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => onTheme("dark")}
+        >
           <MoonIcon />
         </button>
       </div>

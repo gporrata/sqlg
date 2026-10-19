@@ -13,30 +13,65 @@ type Row = {
   open: boolean;
 };
 
-export function SchemaTree({ schema, onInsert }: { schema: SchemaSnapshot | undefined; onInsert: (text: string) => void }) {
+export type SchemaPhase = { kind: "loading" } | { kind: "error"; message: string };
+
+export function SchemaTree({
+  schema,
+  defaultSchema,
+  phase,
+  onRetry,
+  onInsert,
+}: {
+  schema: SchemaSnapshot | undefined;
+  defaultSchema?: string | null;
+  phase?: SchemaPhase;
+  onRetry?: () => void;
+  onInsert: (text: string) => void;
+}) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const parentRef = useRef<HTMLDivElement>(null);
-  const rows = useMemo(() => flatten(schema, open), [schema, open]);
+  const rows = useMemo(() => flatten(schema, open, defaultSchema), [schema, open, defaultSchema]);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 24,
     overscan: 12,
+    initialRect: { width: 242, height: 640 },
   });
   if (!schema) {
     return (
       <aside className="left">
         <div className="h">Schema</div>
-        <p className="empty">Connect to load schemas</p>
+        {phase?.kind === "error" ? (
+          <p className="empty">
+            {phase.message}
+            {onRetry ? (
+              <>
+                {" "}
+                <button type="button" className="btn" onClick={onRetry}>
+                  Retry
+                </button>
+              </>
+            ) : null}
+          </p>
+        ) : (
+          <p className="empty">{phase?.kind === "loading" ? "Loading schemas…" : "Connect to load schemas"}</p>
+        )}
       </aside>
     );
   }
+  const virtualItems = virtualizer.getVirtualItems();
+  const painted =
+    virtualItems.length > 0
+      ? virtualItems.map((item) => ({ key: String(item.key), index: item.index, start: item.start }))
+      : rows.map((row, index) => ({ key: row.key, index, start: index * 24 }));
   return (
     <aside className="left">
       <div className="h">Schema</div>
+      {rows.length === 0 ? <p className="empty">No tables</p> : null}
       <div className="tree" ref={parentRef}>
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-          {virtualizer.getVirtualItems().map((item) => {
+        <div style={{ height: Math.max(virtualizer.getTotalSize(), rows.length * 24), position: "relative" }}>
+          {painted.map((item) => {
             const row = rows[item.index];
             return (
               <div
@@ -69,11 +104,11 @@ export function SchemaTree({ schema, onInsert }: { schema: SchemaSnapshot | unde
   );
 }
 
-function flatten(schema: SchemaSnapshot | undefined, open: Record<string, boolean>): Row[] {
+function flatten(schema: SchemaSnapshot | undefined, open: Record<string, boolean>, defaultSchema?: string | null): Row[] {
   if (!schema) return [];
   const rows: Row[] = [];
   for (const group of schema.schemas) {
-    const groupOpen = open[group.name] ?? false;
+    const groupOpen = open[group.name] ?? (group.name === defaultSchema || schema.schemas.length === 1);
     rows.push({ key: group.name, depth: 0, label: group.name, kind: "schema", expandable: true, open: groupOpen });
     if (!groupOpen) continue;
     for (const table of group.tables) {

@@ -5,6 +5,10 @@ export function isDirty(tab: { sql: string; filePath: string | null; savedSql: s
   return tab.sql.length > 0;
 }
 
+export function needsFileSave(tab: { sql: string; filePath: string | null; savedSql: string | null }): boolean {
+  return Boolean(tab.filePath) && tab.sql !== (tab.savedSql ?? "");
+}
+
 export function selectedText(sql: string, anchor: number | null, head: number | null): string {
   if (anchor == null || head == null || anchor === head) {
     return "";

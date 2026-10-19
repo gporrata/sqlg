@@ -1,6 +1,8 @@
+import type { PointerEvent } from "react";
 import { badgeTone } from "../lib/badge";
 import { isDirty } from "../lib/dirty";
 import { deriveTitle, tabTooltip } from "../lib/titles";
+import { consumeTitleClick, trackWindowDrag } from "../lib/windowChrome";
 import { useApp } from "../app/store";
 import type { Connection, Tab } from "../app/types";
 
@@ -10,7 +12,7 @@ export function TabStrip({ onClose, onNew }: { onClose: (id: string) => void; on
   const connections = useApp((state) => state.connections);
   const setActive = useApp((state) => state.setActive);
   return (
-    <div className="titlebar">
+    <div className="titlebar" onPointerDown={beginTitleDrag}>
       <div className="tabs">
         {tabs.map((tab) => (
           <TabChip
@@ -30,6 +32,13 @@ export function TabStrip({ onClose, onNew }: { onClose: (id: string) => void; on
   );
 }
 
+function beginTitleDrag(event: PointerEvent<HTMLDivElement>) {
+  if (event.button !== 0) return;
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest("button, a, input, select, textarea")) return;
+  trackWindowDrag(event.screenX, event.screenY);
+}
+
 function TabChip({
   tab,
   connection,
@@ -47,7 +56,15 @@ function TabChip({
   const dirty = isDirty(tab);
   const missing = tab.connectionName != null && connection == null;
   return (
-    <div className={active ? "tab" : "tab off"} title={tabTooltip(tab.sql, tab.filePath)} onClick={onSelect}>
+    <div
+      className={active ? "tab" : "tab off"}
+      role="tab"
+      title={tabTooltip(tab.sql, tab.filePath)}
+      onClick={() => {
+        if (consumeTitleClick()) return;
+        onSelect();
+      }}
+    >
       {tab.connectionName ? (
         <span className={`pill ${badgeTone(connection?.name ?? tab.connectionName, connection?.color)}`}>
           {missing ? "missing" : tab.connectionName}

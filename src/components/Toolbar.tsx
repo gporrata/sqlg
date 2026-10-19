@@ -35,10 +35,12 @@ export function Toolbar({ tab }: { tab: Tab }) {
             key={layout.id}
             type="button"
             className={tab.layout === layout.id ? "on" : ""}
+            aria-label={layout.label}
+            title={layout.label}
+            aria-pressed={tab.layout === layout.id}
             onClick={() => updateTab(tab.id, { layout: layout.id })}
           >
             <LayoutGlyph mode={layout.id} />
-            {layout.label}
           </button>
         ))}
       </div>

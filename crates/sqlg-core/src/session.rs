@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 fn default_version() -> u32 {
@@ -48,6 +50,12 @@ pub struct WindowSnapshot {
     pub active_tab: String,
     #[serde(default)]
     pub tabs: Vec<TabSnapshot>,
+    #[serde(default)]
+    pub schema_width: Option<f64>,
+    #[serde(default)]
+    pub editor_width: Option<f64>,
+    #[serde(default)]
+    pub editor_height: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +76,8 @@ pub struct TabSnapshot {
     pub scroll_top: f64,
     #[serde(default = "default_layout")]
     pub layout: String,
+    #[serde(default)]
+    pub column_widths: BTreeMap<String, f64>,
     #[serde(default)]
     pub file_path: Option<String>,
     #[serde(default)]
@@ -104,10 +114,43 @@ mod tests {
         assert_eq!(doc.theme, "light");
         assert_eq!(doc.windows[0].tabs[0].sql, "select 1");
         assert!(doc.windows[0].tabs[0].dirty);
+        assert!(doc.windows[0].schema_width.is_none());
+        assert!(doc.windows[0].tabs[0].column_widths.is_empty());
         let encoded = serde_json::to_string(&doc).unwrap();
         assert!(!encoded.to_lowercase().contains("password"));
         let again: SessionDocument = serde_json::from_str(&encoded).unwrap();
         assert_eq!(again.windows[0].label, "main");
+    }
+
+    #[test]
+    fn layout_sizes_round_trip() {
+        let raw = r#"{
+            "windows": [{
+                "label": "main",
+                "x": 1,
+                "y": 2,
+                "width": 3,
+                "height": 4,
+                "schemaWidth": 280,
+                "editorWidth": 640,
+                "editorHeight": 360,
+                "tabs": [{
+                    "id": "t1",
+                    "sql": "select 1",
+                    "layout": "below",
+                    "columnWidths": { "name": 180 }
+                }]
+            }]
+        }"#;
+        let doc: SessionDocument = serde_json::from_str(raw).unwrap();
+        assert_eq!(doc.windows[0].schema_width, Some(280.0));
+        assert_eq!(doc.windows[0].editor_width, Some(640.0));
+        assert_eq!(doc.windows[0].editor_height, Some(360.0));
+        assert_eq!(doc.windows[0].tabs[0].layout, "below");
+        assert_eq!(doc.windows[0].tabs[0].column_widths.get("name"), Some(&180.0));
+        let again: SessionDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(again.windows[0].editor_height, Some(360.0));
+        assert_eq!(again.windows[0].tabs[0].column_widths.get("name"), Some(&180.0));
     }
 
     #[test]

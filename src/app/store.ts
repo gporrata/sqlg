@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { executionSummary } from "../lib/footer";
-import type { LayoutMode } from "../lib/layout";
+import { paneDefaults, type LayoutMode } from "../lib/layout";
 import type { SchemaSnapshot } from "../lib/schema";
 import { emptyFooter, makeTab, type CloseChoice, type Connection, type QueryEvent, type Tab } from "./types";
 
@@ -17,6 +17,9 @@ type AppState = {
   connectionsOpen: boolean;
   closePrompt: ClosePrompt | null;
   notice: string | null;
+  schemaWidth: number;
+  editorWidth: number;
+  editorHeight: number;
   setTheme: (theme: "light" | "dark") => void;
   setLabel: (label: string) => void;
   setConnections: (connections: Connection[]) => void;
@@ -24,6 +27,10 @@ type AppState = {
   setStatus: (name: string, status: "unknown" | "ok" | "down") => void;
   setConnectionsOpen: (open: boolean) => void;
   setNotice: (notice: string | null) => void;
+  setSchemaWidth: (schemaWidth: number) => void;
+  setEditorWidth: (editorWidth: number) => void;
+  setEditorHeight: (editorHeight: number) => void;
+  setPaneSizes: (sizes: { schemaWidth: number; editorWidth: number; editorHeight: number }) => void;
   setActive: (id: string) => void;
   updateTab: (id: string, patch: Partial<Tab>) => void;
   replaceTabs: (tabs: Tab[], activeTabId: string) => void;
@@ -45,6 +52,9 @@ export const useApp = create<AppState>((set, get) => ({
   connectionsOpen: false,
   closePrompt: null,
   notice: null,
+  schemaWidth: paneDefaults.schema,
+  editorWidth: paneDefaults.editor,
+  editorHeight: paneDefaults.editorHeight,
   setTheme: (theme) => set({ theme }),
   setLabel: (label) => set({ label }),
   setConnections: (connections) => set({ connections }),
@@ -52,6 +62,10 @@ export const useApp = create<AppState>((set, get) => ({
   setStatus: (name, status) => set((state) => ({ status: { ...state.status, [name]: status } })),
   setConnectionsOpen: (connectionsOpen) => set({ connectionsOpen }),
   setNotice: (notice) => set({ notice }),
+  setSchemaWidth: (schemaWidth) => set({ schemaWidth }),
+  setEditorWidth: (editorWidth) => set({ editorWidth }),
+  setEditorHeight: (editorHeight) => set({ editorHeight }),
+  setPaneSizes: (sizes) => set(sizes),
   setActive: (activeTabId) => set({ activeTabId }),
   updateTab: (id, patch) =>
     set((state) => ({

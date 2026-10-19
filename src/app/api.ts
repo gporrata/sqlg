@@ -3,6 +3,14 @@ import type { Connection, QueryEvent, SessionDocument, WindowSnapshot } from "./
 import type { SchemaSnapshot } from "../lib/schema";
 
 export type TextFile = { text: string; newline: string; bom: boolean };
+export type ScratchTab = {
+  id: string;
+  window?: string;
+  connectionName?: string | null;
+  sql: string;
+  cursor?: number;
+  layout?: string;
+};
 export type StatementRange = { sql: string; start: number; end: number };
 
 export const api = {
@@ -27,6 +35,10 @@ export const api = {
   unwatchFile: (path: string) => invoke<void>("unwatch_file", { path }),
   loadSession: () => invoke<SessionDocument>("load_session"),
   upsertWindow: (snapshot: WindowSnapshot) => invoke<void>("upsert_window", { snapshot }),
+  loadScratch: () => invoke<ScratchTab[]>("load_scratch"),
+  saveScratch: (window: string, tabs: ScratchTab[]) => invoke<void>("save_scratch", { window, tabs }),
+  holdQuit: (hold: boolean) => invoke<void>("hold_quit", { hold }),
+  cancelQuit: () => invoke<void>("cancel_quit"),
   removeWindow: (label: string) => invoke<void>("remove_window", { label }),
   setTheme: (theme: string) => invoke<void>("set_theme", { theme }),
   createWindow: () => invoke<string>("create_window"),

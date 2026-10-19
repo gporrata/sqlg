@@ -151,8 +151,15 @@ pub async fn load_schema(pool: &MySqlPool) -> Result<SchemaSnapshot, String> {
         .fetch_one(pool)
         .await
         .unwrap_or(0);
+    // information_schema strings are often tagged BINARY. sqlx refuses those as
+    // String, and a failed decode must not become a blank sidebar label.
     let column_rows = sqlx::query(
-        "select table_schema, table_name, column_name, data_type, column_type, column_key
+        "select convert(table_schema using utf8mb4),
+                convert(table_name using utf8mb4),
+                convert(column_name using utf8mb4),
+                convert(data_type using utf8mb4),
+                convert(column_type using utf8mb4),
+                convert(column_key using utf8mb4)
          from information_schema.columns
          where table_schema not in ('information_schema', 'mysql', 'performance_schema', 'sys')
          order by table_schema, table_name, ordinal_position",
@@ -161,7 +168,9 @@ pub async fn load_schema(pool: &MySqlPool) -> Result<SchemaSnapshot, String> {
     .await
     .map_err(|err| format_sqlx_error(&err))?;
     let fk_rows = sqlx::query(
-        "select table_schema, table_name, column_name
+        "select convert(table_schema using utf8mb4),
+                convert(table_name using utf8mb4),
+                convert(column_name using utf8mb4)
          from information_schema.key_column_usage
          where referenced_table_name is not null
            and table_schema not in ('information_schema', 'mysql', 'performance_schema', 'sys')",
@@ -172,20 +181,20 @@ pub async fn load_schema(pool: &MySqlPool) -> Result<SchemaSnapshot, String> {
 
     let mut foreign = BTreeSet::new();
     for row in &fk_rows {
-        let schema: String = row.try_get(0).unwrap_or_default();
-        let table: String = row.try_get(1).unwrap_or_default();
-        let column: String = row.try_get(2).unwrap_or_default();
+        let schema = sql_text(row, 0);
+        let table = sql_text(row, 1);
+        let column = sql_text(row, 2);
         foreign.insert((schema, table, column));
     }
 
     let mut schemas: BTreeMap<String, BTreeMap<String, Vec<SchemaColumn>>> = BTreeMap::new();
     for row in &column_rows {
-        let schema: String = row.try_get(0).unwrap_or_default();
-        let table: String = row.try_get(1).unwrap_or_default();
-        let name: String = row.try_get(2).unwrap_or_default();
-        let data_type: String = row.try_get(3).unwrap_or_default();
-        let column_type: String = row.try_get(4).unwrap_or_default();
-        let column_key: String = row.try_get(5).unwrap_or_default();
+        let schema = sql_text(row, 0);
+        let table = sql_text(row, 1);
+        let name = sql_text(row, 2);
+        let data_type = sql_text(row, 3);
+        let column_type = sql_text(row, 4);
+        let column_key = sql_text(row, 5);
         let foreign_key = foreign.contains(&(schema.clone(), table.clone(), name.clone()));
         schemas
             .entry(schema)
@@ -473,6 +482,10 @@ fn row_cells(row: &MySqlRow) -> Vec<Option<String>> {
     (0..row.columns().len())
         .map(|idx| cell_value(row, idx))
         .collect()
+}
+
+fn sql_text(row: &MySqlRow, idx: usize) -> String {
+    cell_value(row, idx).unwrap_or_default()
 }
 
 fn cell_value(row: &MySqlRow, idx: usize) -> Option<String> {

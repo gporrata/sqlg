@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::cli_bridge::{self, ingest};
 use crate::db::{self, QueryEvent, SchemaSnapshot};
 use crate::menu;
-use crate::state::AppState;
+use crate::state::{AppState, ScratchTab};
 use crate::windows;
 
 #[derive(Serialize)]
@@ -329,6 +329,16 @@ pub fn load_session(state: State<'_, AppState>) -> sqlg_core::SessionDocument {
 }
 
 #[tauri::command]
+pub fn load_scratch(state: State<'_, AppState>) -> Vec<ScratchTab> {
+    state.load_scratch()
+}
+
+#[tauri::command]
+pub fn save_scratch(state: State<'_, AppState>, window: String, tabs: Vec<ScratchTab>) -> Result<(), String> {
+    state.save_scratch(&window, tabs)
+}
+
+#[tauri::command]
 pub fn upsert_window(state: State<'_, AppState>, snapshot: WindowSnapshot) -> Result<(), String> {
     state.update_session(|doc| {
         if let Some(existing) = doc
@@ -384,6 +394,17 @@ pub fn take_pending(state: State<'_, AppState>, label: String) -> Option<CliRequ
 #[tauri::command]
 pub fn is_quitting(state: State<'_, AppState>) -> bool {
     state.quitting.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub fn hold_quit(state: State<'_, AppState>, hold: bool) {
+    state.quit_hold.store(hold, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn cancel_quit(state: State<'_, AppState>) {
+    state.quitting.store(false, Ordering::SeqCst);
+    state.quit_hold.store(false, Ordering::SeqCst);
 }
 
 #[tauri::command]

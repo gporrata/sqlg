@@ -3,8 +3,8 @@ use std::ops::ControlFlow;
 
 use serde::{Deserialize, Serialize};
 use sqlparser::ast::{
-    Expr, ObjectName, Query, Select, SelectItem, SetExpr, Spanned, Statement, TableFactor,
-    TableWithJoins, Visit, Visitor,
+    Expr, GroupByExpr, ObjectName, OrderBy, Query, Select, SelectItem, SetExpr, Spanned, Statement,
+    TableFactor, TableWithJoins, Visit, Visitor,
 };
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;
@@ -314,6 +314,19 @@ fn collect_ctes(query: &Query, index: &CatalogIndex, scope: &mut Scope) {
     }
 }
 
+/// Names a select list introduces with `AS` or an implicit alias.
+/// MySQL accepts those names in `GROUP BY`, `HAVING`, and `ORDER BY`.
+fn select_output_aliases(select: &Select) -> Vec<String> {
+    select
+        .projection
+        .iter()
+        .filter_map(|item| match item {
+            SelectItem::ExprWithAlias { alias, .. } => Some(alias.value.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 fn columns_of_query(query: &Query) -> Option<Vec<String>> {
     let select = select_body(query)?;
     let mut cols = Vec::new();
@@ -489,8 +502,23 @@ fn check_exprs(
         scope,
         index,
         diags,
+        frames: Vec::new(),
     };
     let _ = stmt.visit(&mut visitor);
+}
+
+/// One query's select-list aliases, and whether the visitor is inside a
+/// clause where MySQL can see them.
+struct QueryFrame {
+    aliases: Vec<String>,
+    /// `GROUP BY`, `HAVING`, and this query's `ORDER BY` increment this.
+    /// Nested queries push their own frame, so an outer alias stays hidden
+    /// inside a subquery.
+    alias_depth: u32,
+    having: Option<*const Expr>,
+    order_by: Option<*const OrderBy>,
+    /// The body select has already supplied `aliases` and `having`.
+    bound: bool,
 }
 
 struct ColVisitor<'a> {
@@ -498,12 +526,67 @@ struct ColVisitor<'a> {
     scope: &'a Scope,
     index: &'a CatalogIndex,
     diags: &'a mut Vec<Diagnostic>,
+    frames: Vec<QueryFrame>,
 }
 
 impl Visitor for ColVisitor<'_> {
     type Break = ();
 
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+        self.frames.push(QueryFrame {
+            aliases: Vec::new(),
+            alias_depth: 0,
+            having: None,
+            order_by: query.order_by.as_ref().map(std::ptr::from_ref),
+            bound: false,
+        });
+        ControlFlow::Continue(())
+    }
+
+    fn post_visit_query(&mut self, _query: &Query) -> ControlFlow<Self::Break> {
+        self.frames.pop();
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<Self::Break> {
+        if let Some(frame) = self.frames.last_mut()
+            && !frame.bound
+        {
+            frame.bound = true;
+            frame.aliases = select_output_aliases(select);
+            frame.having = select.having.as_ref().map(std::ptr::from_ref);
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_group_by(&mut self, _group_by: &GroupByExpr) -> ControlFlow<Self::Break> {
+        self.enter_alias_clause();
+        ControlFlow::Continue(())
+    }
+
+    fn post_visit_group_by(&mut self, _group_by: &GroupByExpr) -> ControlFlow<Self::Break> {
+        self.leave_alias_clause();
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_order_by(&mut self, order_by: &OrderBy) -> ControlFlow<Self::Break> {
+        if self.is_query_order_by(order_by) {
+            self.enter_alias_clause();
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn post_visit_order_by(&mut self, order_by: &OrderBy) -> ControlFlow<Self::Break> {
+        if self.is_query_order_by(order_by) {
+            self.leave_alias_clause();
+        }
+        ControlFlow::Continue(())
+    }
+
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        if self.is_having_expr(expr) {
+            self.enter_alias_clause();
+        }
         match expr {
             Expr::Identifier(ident) => self.check_unqualified(ident),
             Expr::CompoundIdentifier(parts) if parts.len() >= 2 => self.check_compound(parts),
@@ -511,11 +594,57 @@ impl Visitor for ColVisitor<'_> {
         }
         ControlFlow::Continue(())
     }
+
+    fn post_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        if self.is_having_expr(expr) {
+            self.leave_alias_clause();
+        }
+        ControlFlow::Continue(())
+    }
 }
 
 impl ColVisitor<'_> {
+    fn enter_alias_clause(&mut self) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.alias_depth += 1;
+        }
+    }
+
+    fn leave_alias_clause(&mut self) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.alias_depth = frame.alias_depth.saturating_sub(1);
+        }
+    }
+
+    fn is_having_expr(&self, expr: &Expr) -> bool {
+        self.frames
+            .last()
+            .and_then(|frame| frame.having)
+            .is_some_and(|having| std::ptr::eq(having, expr))
+    }
+
+    fn is_query_order_by(&self, order_by: &OrderBy) -> bool {
+        self.frames
+            .last()
+            .and_then(|frame| frame.order_by)
+            .is_some_and(|found| std::ptr::eq(found, order_by))
+    }
+
+    fn alias_in_scope(&self, name: &str) -> bool {
+        self.frames.last().is_some_and(|frame| {
+            frame.alias_depth > 0
+                && frame
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(name))
+        })
+    }
+
     fn check_unqualified(&mut self, ident: &sqlparser::ast::Ident) {
         if self.scope.tables.is_empty() {
+            return;
+        }
+        if self.alias_in_scope(&ident.value) {
             return;
         }
         let mut matches_known = false;
@@ -530,6 +659,9 @@ impl ColVisitor<'_> {
             if columns.iter().any(|c| c.eq_ignore_ascii_case(&ident.value)) {
                 matches_known = true;
             }
+        }
+        if let Some(frame) = self.frames.last().filter(|frame| frame.alias_depth > 0) {
+            candidates.extend(frame.aliases.iter().cloned());
         }
         if matches_known || unknown_scope {
             return;
@@ -891,6 +1023,80 @@ mod tests {
         let diags = lint_sql(sql, &LintCatalog::default());
         assert!(!diags.is_empty());
         assert!(diags[0].to >= diags[0].from);
+    }
+
+    fn book() -> LintCatalog {
+        LintCatalog {
+            default_schema: Some("book".into()),
+            lower_case_table_names: 0,
+            schemas: vec![LintSchema {
+                name: "book".into(),
+                tables: vec![
+                    LintTable {
+                        name: "TRIP".into(),
+                        columns: vec!["id".into()],
+                    },
+                    LintTable {
+                        name: "TRAVEL_BOOKING".into(),
+                        columns: vec!["id".into(), "trip_id".into()],
+                    },
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn having_accepts_a_select_alias() {
+        let sql = "-- find a trip with multiple v2 manual booking notes... and possible trip note
+select t.id, count(tb.id) tbcnt
+from book.TRIP t
+join book.TRAVEL_BOOKING tb on tb.trip_id = t.id
+group by t.id
+having tbcnt > 1";
+        let diags = lint_sql(sql, &book());
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn group_by_and_order_by_accept_a_select_alias() {
+        let sql = "SELECT t.status AS state, COUNT(t.id) AS trips FROM TRIP t GROUP BY state ORDER BY trips";
+        let diags = lint_sql(sql, &fleet());
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn where_still_rejects_a_select_alias() {
+        let sql = "SELECT t.status AS state FROM TRIP t WHERE state = 'completed'";
+        let diags = lint_sql(sql, &fleet());
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("state"));
+        assert!(diags[0].from > sql.find("AS state").unwrap());
+    }
+
+    #[test]
+    fn having_alias_does_not_hide_a_nested_or_window_reference() {
+        let nested =
+            "SELECT COUNT(t.id) AS tbcnt FROM TRIP t HAVING tbcnt > (SELECT tbcnt FROM DRIVER)";
+        let diags = lint_sql(nested, &fleet());
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(&nested[diags[0].from..diags[0].to], "tbcnt");
+        assert!(diags[0].from > nested.find("SELECT tbcnt").unwrap());
+
+        let window = "SELECT COUNT(t.id) AS tbcnt, SUM(t.id) OVER (ORDER BY tbcnt) FROM TRIP t";
+        let diags = lint_sql(window, &fleet());
+        assert!(
+            diags.iter().any(|diag| diag.message.contains("tbcnt")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn having_typo_suggests_the_select_alias() {
+        let sql = "SELECT t.status AS state FROM TRIP t GROUP BY state HAVING sttae = 'completed'";
+        let diags = lint_sql(sql, &fleet());
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert!(diags[0].message.contains("state"), "{}", diags[0].message);
+        assert_eq!(&sql[diags[0].from..diags[0].to], "sttae");
     }
 
     #[test]

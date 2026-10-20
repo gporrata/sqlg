@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { SchemaTree } from "../components/SchemaTree";
 import type { SchemaSnapshot } from "../lib/schema";
@@ -17,7 +17,13 @@ const snapshot: SchemaSnapshot = {
     {
       name: "book",
       tables: [
-        { name: "trip", columns: [{ name: "id", dataType: "int", columnType: "int", columnKey: "PRI", foreignKey: false }] },
+        {
+          name: "trip",
+          columns: [
+            { name: "id", dataType: "int", columnType: "int", columnKey: "PRI", foreignKey: false },
+            { name: "notes", dataType: "varchar", columnType: "varchar(40)", columnKey: "", foreignKey: false },
+          ],
+        },
         { name: "driver", columns: [] },
       ],
     },
@@ -33,6 +39,16 @@ describe("schema tree", () => {
     expect(screen.getByText("driver")).toBeTruthy();
     expect(screen.getByText("analytics")).toBeTruthy();
     expect(screen.queryByText("event")).toBeNull();
+  });
+
+  it("colors a column type label", () => {
+    const { container } = render(<SchemaTree schema={snapshot} defaultSchema="book" onInsert={() => undefined} />);
+    const view = within(container);
+    const trip = view.getByText("trip").closest(".tn");
+    fireEvent.click(trip?.querySelector("button") as HTMLButtonElement);
+    expect(view.getByText("int").className).toContain("tone-num");
+    expect(view.getByText("varchar(40)").className).toContain("tone-text");
+    expect(container.querySelector(".gl.tone-text")?.textContent).toBe("Aa");
   });
 
   it("shows a load failure instead of the empty prompt", () => {

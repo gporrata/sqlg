@@ -2,8 +2,6 @@ use sqlg_core::WindowSnapshot;
 use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Theme, TitleBarStyle, WebviewUrl};
 
-use crate::state::AppState;
-
 pub fn create_window(app: &AppHandle, label: &str) -> Result<(), String> {
     if app.get_webview_window(label).is_some() {
         return Ok(());
@@ -50,16 +48,35 @@ pub fn place(app: &AppHandle, snapshot: &WindowSnapshot) -> Result<(), String> {
 }
 
 pub fn apply_theme(app: &AppHandle, theme: &str) {
-    let theme = if theme == "dark" {
-        Theme::Dark
-    } else {
+    // Native chrome is only light or dark. CSS carries the full palette.
+    // Keep the light ids aligned with src/app/themes.ts.
+    let native = if is_light_theme(theme) {
         Theme::Light
+    } else {
+        Theme::Dark
     };
-    if let Some(state) = app.try_state::<AppState>() {
-        let _ = state;
-    }
     for (_, window) in app.webview_windows() {
-        let _ = window.set_theme(Some(theme));
+        let _ = window.set_theme(Some(native));
+    }
+}
+
+pub fn is_light_theme(theme: &str) -> bool {
+    matches!(theme, "light" | "github-light" | "solarized-light")
+}
+
+pub fn normalize_theme(theme: &str) -> String {
+    let theme = theme.trim();
+    let ok = !theme.is_empty()
+        && theme.len() <= 64
+        && !theme.starts_with('-')
+        && !theme.ends_with('-')
+        && theme
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if ok {
+        theme.to_string()
+    } else {
+        "light".to_string()
     }
 }
 

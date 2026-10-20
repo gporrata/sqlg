@@ -7,7 +7,7 @@ import { emptyFooter, makeTab, type CloseChoice, type Connection, type QueryEven
 type ClosePrompt = { tabIds: string[]; resolve: (choice: CloseChoice) => void };
 
 type AppState = {
-  theme: "light" | "dark";
+  theme: string;
   label: string;
   tabs: Tab[];
   activeTabId: string;
@@ -15,17 +15,19 @@ type AppState = {
   schemas: Record<string, SchemaSnapshot>;
   status: Record<string, "unknown" | "ok" | "down">;
   connectionsOpen: boolean;
+  settingsOpen: boolean;
   closePrompt: ClosePrompt | null;
   notice: string | null;
   schemaWidth: number;
   editorWidth: number;
   editorHeight: number;
-  setTheme: (theme: "light" | "dark") => void;
+  setTheme: (theme: string) => void;
   setLabel: (label: string) => void;
   setConnections: (connections: Connection[]) => void;
   setSchema: (name: string, schema: SchemaSnapshot) => void;
   setStatus: (name: string, status: "unknown" | "ok" | "down") => void;
   setConnectionsOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
   setNotice: (notice: string | null) => void;
   setSchemaWidth: (schemaWidth: number) => void;
   setEditorWidth: (editorWidth: number) => void;
@@ -50,6 +52,7 @@ export const useApp = create<AppState>((set, get) => ({
   schemas: {},
   status: {},
   connectionsOpen: false,
+  settingsOpen: false,
   closePrompt: null,
   notice: null,
   schemaWidth: paneDefaults.schema,
@@ -61,6 +64,7 @@ export const useApp = create<AppState>((set, get) => ({
   setSchema: (name, schema) => set((state) => ({ schemas: { ...state.schemas, [name]: schema } })),
   setStatus: (name, status) => set((state) => ({ status: { ...state.status, [name]: status } })),
   setConnectionsOpen: (connectionsOpen) => set({ connectionsOpen }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   setNotice: (notice) => set({ notice }),
   setSchemaWidth: (schemaWidth) => set({ schemaWidth }),
   setEditorWidth: (editorWidth) => set({ editorWidth }),

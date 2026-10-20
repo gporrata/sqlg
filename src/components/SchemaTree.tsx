@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { columnKind, type ColumnKind, type SchemaSnapshot } from "../lib/schema";
+import { columnKind, typeTone, type ColumnKind, type SchemaSnapshot } from "../lib/schema";
 import { Chevron, KeyIcon, LinkIcon, SchemaIcon, TableIcon } from "./Icons";
 
 type Row = {
@@ -94,7 +94,7 @@ export function SchemaTree({
                 </button>
                 <KindIcon kind={row.kind} />
                 <span className="nm">{row.label}</span>
-                {row.typeLabel ? <span className="ty">{row.typeLabel}</span> : null}
+                {row.typeLabel ? <span className={`ty tone-${typeTone(row.typeLabel)}`}>{row.typeLabel}</span> : null}
               </div>
             );
           })}
@@ -137,9 +137,9 @@ function KindIcon({ kind }: { kind: Row["kind"] }) {
   if (kind === "table") return <TableIcon />;
   if (kind === "pk") return <KeyIcon />;
   if (kind === "fk") return <LinkIcon />;
-  if (kind === "numeric") return <span className="gl">#</span>;
-  if (kind === "text") return <span className="gl">Aa</span>;
-  if (kind === "datetime") return <span className="gl">◷</span>;
-  if (kind === "enum") return <span className="gl">◐</span>;
-  return <span className="gl">•</span>;
+  if (kind === "numeric") return <span className="gl tone-num">#</span>;
+  if (kind === "text") return <span className="gl tone-text">Aa</span>;
+  if (kind === "datetime") return <span className="gl tone-time">◷</span>;
+  if (kind === "enum") return <span className="gl tone-enum">◐</span>;
+  return <span className="gl tone-other">•</span>;
 }

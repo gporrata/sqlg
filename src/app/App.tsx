@@ -10,10 +10,12 @@ import { isDirty, needsFileSave, selectedText } from "../lib/dirty";
 import { layoutMode, paneDefaults, paneMin, paneSize, panes, savedColumnWidths } from "../lib/layout";
 import { claimRun } from "../lib/runLock";
 import { executionSummary } from "../lib/footer";
+import { applyTheme, themeById } from "./themes";
 import { ClosePrompt } from "../components/ClosePrompt";
 import { ConnectionsModal, type Draft } from "../components/ConnectionsModal";
 import { QueryEditor } from "../components/Editor";
 import { Footer } from "../components/Footer";
+import { SettingsModal } from "../components/SettingsModal";
 import { Results } from "../components/Results";
 import { SchemaTree, type SchemaPhase } from "../components/SchemaTree";
 import { TabStrip } from "../components/TabStrip";
@@ -36,6 +38,7 @@ export default function App() {
   const connections = useApp((state) => state.connections);
   const schemas = useApp((state) => state.schemas);
   const connectionsOpen = useApp((state) => state.connectionsOpen);
+  const settingsOpen = useApp((state) => state.settingsOpen);
   const notice = useApp((state) => state.notice);
   const tab = tabs.find((item) => item.id === activeTabId) ?? tabs[0];
   const connection = connections.find((item) => item.name === tab?.connectionName);
@@ -53,7 +56,7 @@ export default function App() {
   const pileRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    applyTheme(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -207,6 +210,8 @@ export default function App() {
                   restored={tab.restored && tab.results.length === 0}
                   columnWidths={tab.columnWidths}
                   onColumnWidth={rememberColumn}
+                  schema={tab.connectionName ? schemas[tab.connectionName] : undefined}
+                  defaultSchema={connection?.schema}
                 />
               </div>
             ) : null}
@@ -247,13 +252,22 @@ export default function App() {
                   restored={tab.restored && tab.results.length === 0}
                   columnWidths={tab.columnWidths}
                   onColumnWidth={rememberColumn}
+                  schema={tab.connectionName ? schemas[tab.connectionName] : undefined}
+                  defaultSchema={connection?.schema}
                 />
               </div>
             ) : null}
           </>
         )}
       </div>
-      <Footer tab={tab} connection={connection} theme={theme} onTheme={(next) => void changeTheme(next)} />
+      <Footer tab={tab} connection={connection} onSettings={() => useApp.getState().setSettingsOpen(true)} />
+      {settingsOpen ? (
+        <SettingsModal
+          theme={theme}
+          onTheme={(next) => void changeTheme(next)}
+          onClose={() => useApp.getState().setSettingsOpen(false)}
+        />
+      ) : null}
       {connectionsOpen ? (
         <ConnectionsModal
           connections={connections}
@@ -280,7 +294,7 @@ async function boot(stopped: () => boolean, unlisten: Array<() => void>): Promis
     return false;
   }
   if (stopped()) return false;
-  const theme = session.theme === "dark" ? "dark" : "light";
+  const theme = themeById(session.theme).id;
   useApp.getState().setTheme(theme);
   const scratch = await loadScratch();
   if (stopped()) return false;
@@ -338,7 +352,7 @@ async function boot(stopped: () => boolean, unlisten: Array<() => void>): Promis
   );
   unlisten.push(
     await listen<string>("theme-changed", (event) => {
-      useApp.getState().setTheme(event.payload === "dark" ? "dark" : "light");
+      useApp.getState().setTheme(themeById(event.payload).id);
     }),
   );
   unlisten.push(await listen("connections-changed", () => void refreshConnections()));
@@ -399,7 +413,7 @@ async function newWindow() {
   await api.createWindow();
 }
 
-async function changeTheme(theme: "light" | "dark") {
+async function changeTheme(theme: string) {
   useApp.getState().setTheme(theme);
   try {
     await api.setTheme(theme);
@@ -471,6 +485,7 @@ async function onMenu(id: string) {
   if (id === "file-close-tab") await closeTabs([tab.id]);
   if (id === "file-close-window") await closeWindow();
   if (id === "file-connections") useApp.getState().setConnectionsOpen(true);
+  if (id === "view-settings") useApp.getState().setSettingsOpen(true);
   if (id === "query-run") {
     const selection = selectedText(tab.sql, tab.selectionAnchor, tab.selectionHead);
     await runSql(tab, selection || tab.sql, selection ? Math.min(tab.selectionAnchor ?? 0, tab.selectionHead ?? 0) : 0, selection ? Math.max(tab.selectionAnchor ?? 0, tab.selectionHead ?? 0) : tab.sql.length);

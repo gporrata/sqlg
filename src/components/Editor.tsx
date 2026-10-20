@@ -9,6 +9,7 @@ import { Decoration, EditorView, drawSelection, highlightActiveLine, keymap, lin
 import { tags } from "@lezer/highlight";
 import { api, type Diagnostic } from "../app/api";
 import { useApp } from "../app/store";
+import { themeById } from "../app/themes";
 import { completionSchema, lintCatalog } from "../lib/schema";
 import { selectedText } from "../lib/dirty";
 import type { Tab } from "../app/types";
@@ -34,19 +35,19 @@ const flashField = StateField.define({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-const lightHl = HighlightStyle.define([
-  { tag: tags.keyword, color: "#ad3da4", fontWeight: "600" },
-  { tag: tags.string, color: "#c41a16" },
-  { tag: tags.number, color: "#1c00cf" },
-  { tag: tags.comment, color: "#8a8a8e", fontStyle: "italic" },
+const sqlHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: "var(--syn-keyword)", fontWeight: "600" },
+  { tag: [tags.bool, tags.null], color: "var(--syn-keyword)" },
+  { tag: tags.operator, color: "var(--syn-operator)" },
+  { tag: tags.string, color: "var(--syn-string)" },
+  { tag: tags.number, color: "var(--syn-number)" },
+  { tag: tags.typeName, color: "var(--syn-type)" },
+  { tag: tags.comment, color: "var(--syn-comment)", fontStyle: "italic" },
 ]);
 
-const darkHl = HighlightStyle.define([
-  { tag: tags.keyword, color: "#ff7ab2", fontWeight: "600" },
-  { tag: tags.string, color: "#ff8170" },
-  { tag: tags.number, color: "#d9c97c" },
-  { tag: tags.comment, color: "#7f8c98", fontStyle: "italic" },
-]);
+function editorChrome(dark: boolean) {
+  return [EditorView.darkTheme.of(dark), syntaxHighlighting(sqlHighlight)];
+}
 
 const schemaCompartment = new Compartment();
 const themeCompartment = new Compartment();
@@ -95,7 +96,7 @@ export function QueryEditor({
           tooltips({ parent: document.body }),
           flashField,
           schemaCompartment.of(sqlExtension()),
-          themeCompartment.of(syntaxHighlighting(document.documentElement.dataset.theme === "dark" ? darkHl : lightHl)),
+          themeCompartment.of(editorChrome(themeById(useApp.getState().theme).dark)),
           sqlLinter(),
           explainLinter(),
           autocompletion(),
@@ -117,10 +118,15 @@ export function QueryEditor({
             });
           }),
           EditorView.theme({
-            "&": { height: "100%", fontSize: "12.5px" },
-            ".cm-scroller": { fontFamily: "Menlo, SF Mono, monospace", lineHeight: "20px" },
-            ".cm-gutters": { background: "transparent", borderRight: "1px solid var(--bd)" },
-            ".cm-ran": { background: "rgba(10, 100, 216, 0.18)" },
+            "&": { height: "100%", fontSize: "12.5px", backgroundColor: "var(--ed-bg)", color: "var(--ed-fg)" },
+            ".cm-scroller": { fontFamily: "Menlo, SF Mono, monospace", lineHeight: "20px", backgroundColor: "var(--ed-bg)" },
+            ".cm-content": { caretColor: "var(--ed-caret)", color: "var(--ed-fg)" },
+            ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--ed-caret)" },
+            ".cm-gutters": { background: "transparent", color: "var(--mut)", borderRight: "1px solid var(--bd)" },
+            ".cm-activeLine": { backgroundColor: "var(--ed-line)" },
+            ".cm-selectionBackground": { backgroundColor: "var(--sel)" },
+            ".cm-line ::selection, .cm-line::selection": { color: "var(--sel-fg)" },
+            ".cm-ran": { backgroundColor: "var(--ed-ran)" },
           }),
         ],
       }),
@@ -155,11 +161,12 @@ export function QueryEditor({
     });
   }, [snapshot, defaultSchema, tab.id]);
 
+  const dark = themeById(theme).dark;
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: themeCompartment.reconfigure(syntaxHighlighting(theme === "dark" ? darkHl : lightHl)),
+      effects: themeCompartment.reconfigure(editorChrome(dark)),
     });
-  }, [theme, tab.id]);
+  }, [dark, tab.id]);
 
   useEffect(() => {
     const view = viewRef.current;

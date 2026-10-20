@@ -1,11 +1,12 @@
 /**
  * @vitest-environment jsdom
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it } from "vitest";
 import { makeTab, type ResultSection } from "../app/types";
 import { columnWidths, Results } from "../components/Results";
 import { Footer } from "../components/Footer";
+import { SettingsModal } from "../components/SettingsModal";
 import { Toolbar } from "../components/Toolbar";
 
 beforeAll(() => {
@@ -48,12 +49,59 @@ describe("results and layout buttons", () => {
       <Footer
         tab={makeTab(null)}
         connection={{ name: "dev", host: "db.example", port: 3306, user: "secret-user", ssl: false, explain_lint: false }}
-        theme="light"
-        onTheme={() => undefined}
+        onSettings={() => undefined}
       />,
     );
     expect(screen.getByText("dev · db.example:3306")).toBeTruthy();
     expect(screen.queryByText(/secret-user/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Light" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dark" })).toBeNull();
+  });
+
+  it("applies a theme from the settings list without a save button", () => {
+    const chosen: string[] = [];
+    render(<SettingsModal theme="light" onTheme={(id) => chosen.push(id)} onClose={() => undefined} />);
+    fireEvent.click(screen.getByRole("option", { name: "One Dark Pro Night Flat" }));
+    expect(chosen).toEqual(["one-dark-pro-night-flat"]);
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
+  it("colors column types and toggles columns from the alias menu", () => {
+    const joined: ResultSection = {
+      index: 0,
+      sql: "select d.id, d.name, t.status from driver d join trip t on t.driver_id = d.id",
+      columns: [
+        { name: "id", typeName: "INT", numeric: true },
+        { name: "name", typeName: "VARCHAR", numeric: false },
+        { name: "status", typeName: "ENUM", numeric: false },
+      ],
+      rows: [["1", "Ada", "active"]],
+      rowsAffected: null,
+      rowCount: 1,
+      error: null,
+      elapsedMs: 4,
+      done: true,
+    };
+    const { container } = render(<Results sections={[joined]} restored={false} />);
+    const view = within(container);
+    expect(container.querySelector(".ht.tone-num")?.textContent).toBe("INT");
+    expect(container.querySelector(".ht.tone-text")?.textContent).toBe("VARCHAR");
+    expect(container.querySelector(".ht.tone-enum")?.textContent).toBe("ENUM");
+    fireEvent.click(view.getByRole("button", { name: "Columns" }));
+    expect(view.getByRole("button", { name: "Select all" }).className).toContain("on");
+    expect(view.getByRole("group", { name: "d" })).toBeTruthy();
+    expect(view.getByRole("group", { name: "t" })).toBeTruthy();
+    fireEvent.click(view.getByRole("checkbox", { name: /status/ }));
+    expect(view.queryByText("active")).toBeNull();
+    expect(view.getByText("Ada")).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "Unselect all" }));
+    expect(view.getByText("No columns shown")).toBeTruthy();
+    expect(view.queryByText("Ada")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Select all" }));
+    expect(view.getByText("Ada")).toBeTruthy();
+    expect(view.getByText("active")).toBeTruthy();
   });
 
   it("shows layout choices as icons", () => {

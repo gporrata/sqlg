@@ -365,11 +365,11 @@ pub fn remove_window(state: State<'_, AppState>, label: String) -> Result<(), St
 
 #[tauri::command]
 pub fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: String) -> Result<(), String> {
-    let theme = if theme == "dark" { "dark" } else { "light" };
+    let theme = windows::normalize_theme(&theme);
     state.update_session(|doc| {
-        doc.theme = theme.to_string();
+        doc.theme = theme.clone();
     })?;
-    windows::apply_theme(&app, theme);
+    windows::apply_theme(&app, &theme);
     let _ = app.emit("theme-changed", theme);
     Ok(())
 }

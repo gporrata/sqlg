@@ -2,7 +2,6 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::AppState;
-use crate::windows;
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let about = PredefinedMenuItem::about(app, Some("About sqlg"), None)?;
@@ -131,9 +130,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
-    let light = MenuItem::with_id(app, "view-theme-light", "Light", true, None::<&str>)?;
-    let dark = MenuItem::with_id(app, "view-theme-dark", "Dark", true, None::<&str>)?;
-    let view_menu = Submenu::with_items(app, "View", true, &[&light, &dark])?;
+    let settings = MenuItem::with_id(app, "view-settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let view_menu = Submenu::with_items(app, "View", true, &[&settings])?;
 
     let run = MenuItem::with_id(app, "query-run", "Run", true, Some("CmdOrCtrl+Return"))?;
     let run_stmt = MenuItem::with_id(
@@ -165,14 +163,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         let id = event.id().as_ref().to_string();
         match id.as_str() {
             "app-quit" => request_quit(app),
-            "view-theme-light" => {
-                windows::apply_theme(app, "light");
-                let _ = app.emit("theme-changed", "light");
-            }
-            "view-theme-dark" => {
-                windows::apply_theme(app, "dark");
-                let _ = app.emit("theme-changed", "dark");
-            }
             _ => emit_menu(app, &id),
         }
     });

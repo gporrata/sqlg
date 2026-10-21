@@ -128,16 +128,14 @@ button, input, select { font: inherit; color: inherit; }
 .pane.results, .pane.grow { flex: 1; }
 .pane.schema, .pane.editor { flex: none; }
 .pane .left, .pane .mid, .pane .right { flex: 1; width: auto; min-width: 0; min-height: 0; border-right: none; }
-.split.x, .split.y { flex: none; align-self: stretch; position: relative; z-index: 6; touch-action: none; background: var(--bd); user-select: none; }
-.split.x { width: 1px; cursor: col-resize; }
-.split.y { height: 1px; cursor: row-resize; }
-.split.x::before, .split.y::before { content: ""; position: absolute; background: transparent; pointer-events: none; }
-.split.x::after, .split.y::after { content: ""; position: absolute; }
-.split.x::before { top: 0; bottom: 0; width: 4px; left: -1.5px; }
-.split.y::before { left: 0; right: 0; height: 4px; top: -1.5px; }
-.split.x::after { top: 0; bottom: 0; width: 7px; left: -3px; }
-.split.y::after { left: 0; right: 0; height: 7px; top: -3px; }
-.split.x.on::before, .split.y.on::before { background: var(--accent); }
+.split.x, .split.y { --sash-size: 10px; --sash-hover-size: 10px; flex: none; align-self: stretch; position: relative; z-index: 6; touch-action: none; background: transparent; user-select: none; }
+.split.x { width: var(--sash-size); margin: 0 calc((var(--sash-size) - 1px) / -2); cursor: col-resize; }
+.split.y { height: var(--sash-size); margin: calc((var(--sash-size) - 1px) / -2) 0; cursor: row-resize; }
+.split.x::before, .split.y::before { content: ""; position: absolute; pointer-events: none; background: var(--bd); }
+.split.x::before { top: 0; bottom: 0; width: 1px; left: calc(50% - 0.5px); }
+.split.y::before { left: 0; right: 0; height: 1px; top: calc(50% - 0.5px); }
+.split.x.on::before { width: var(--sash-hover-size); left: calc(50% - (var(--sash-hover-size) / 2)); background: var(--accent); }
+.split.y.on::before { height: var(--sash-hover-size); top: calc(50% - (var(--sash-hover-size) / 2)); background: var(--accent); }
 .left { width: 250px; flex: none; background: var(--side); border-right: 1px solid var(--bd); display: flex; flex-direction: column; min-height: 0; }
 .h { font-size: 11px; color: var(--mut); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 10px 12px 6px; }
 .tree { flex: 1 1 auto; min-height: 120px; overflow: auto; position: relative; }

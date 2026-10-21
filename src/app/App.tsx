@@ -123,9 +123,12 @@ export default function App() {
 
   if (!tab) return null;
 
-  const rememberColumn = (name: string, width: number) => {
+  const rememberColumn = (name: string, width: number | null) => {
     const current = useApp.getState().tabs.find((item) => item.id === tab.id);
-    useApp.getState().updateTab(tab.id, { columnWidths: { ...(current?.columnWidths ?? {}), [name]: width } });
+    const columnWidths = { ...(current?.columnWidths ?? {}) };
+    if (width == null) delete columnWidths[name];
+    else columnWidths[name] = width;
+    useApp.getState().updateTab(tab.id, { columnWidths });
   };
 
   return (

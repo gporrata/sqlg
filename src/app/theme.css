@@ -165,6 +165,9 @@ button, input, select { font: inherit; color: inherit; }
 .mid { flex: 1.1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--bd); }
 .right { flex: 1.4; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .edhead, .reshead { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--bd); color: var(--mut); }
+.types { border: 1px solid var(--line); background: var(--win); color: var(--mut); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.types.on, .types:hover { color: var(--fg); }
+.types.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--win)); }
 .sb { margin-left: auto; border: 1px solid var(--line); background: var(--win); border-radius: 6px; padding: 3px 8px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .edhead .sb + .sb { margin-left: 0; }
 .sb kbd { color: var(--mut); font: 11px -apple-system, Arial; }
@@ -262,10 +265,11 @@ button, input, select { font: inherit; color: inherit; }
 .grid { max-height: 360px; overflow: auto; }
 .colrules { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
 .hr { display: flex; position: sticky; top: 0; z-index: 1; background: var(--side); }
-.cell.head { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; height: 38px; font: 600 12px -apple-system, Arial; background: var(--side); position: relative; user-select: none; overflow: hidden; line-height: 1.15; }
+.cell.head { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; height: 38px; font: 600 12px -apple-system, Arial; background: var(--side); position: relative; user-select: none; overflow: hidden; line-height: 1.15; color: var(--fg); cursor: pointer; }
+.grid.plain .cell.head { height: 26px; }
 .cell.head.num { align-items: flex-end; }
 .hn { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.ht { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: 500 10px Menlo, monospace; }
+.ht { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: 500 10px Menlo, monospace; color: var(--fg); }
 .colpick { position: relative; flex: none; }
 .colpick > .sb { margin-left: 0; }
 .colpop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; width: 260px; max-height: min(320px, 50vh); overflow: auto; background: var(--tool); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); padding: 8px; }
@@ -279,8 +283,15 @@ button, input, select { font: inherit; color: inherit; }
 .colsplit { position: absolute; top: 0; bottom: 0; width: 8px; margin-left: -4px; cursor: col-resize; pointer-events: auto; }
 .vr { display: flex; height: 24px; font: 12px Menlo, monospace; }
 .vr.even { background: color-mix(in srgb, var(--side) 65%, transparent); }
+.vr .cell { cursor: pointer; }
 .cell { flex: none; box-sizing: border-box; padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid var(--bd); }
 .cell.num { text-align: right; }
+.cellpop { position: fixed; z-index: 45; min-width: 148px; background: var(--tool); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); padding: 4px; }
+.cellpop button { display: block; width: 100%; text-align: left; border: none; background: transparent; color: var(--fg); border-radius: 5px; padding: 6px 10px; cursor: pointer; }
+.cellpop button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.mask.float { position: fixed; z-index: 60; }
+.modal.json { width: 640px; max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.json-view { margin: 0; padding: 16px 18px; overflow: auto; max-height: min(560px, calc(100vh - 160px)); font: 12px Menlo, monospace; white-space: pre; color: var(--fg); }
 .empty { color: var(--mut); padding: 16px; }
 .footer { position: relative; z-index: 40; height: 32px; border-top: 1px solid var(--line); background: var(--tool); display: flex; align-items: center; gap: 10px; padding: 0 10px 6px; font-size: 12px; }
 .footer .r { margin-left: auto; color: var(--mut); display: flex; gap: 16px; }

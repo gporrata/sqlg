@@ -1046,6 +1046,49 @@ mod tests {
     }
 
     #[test]
+    fn having_accepts_an_explicit_alias_beside_extra_joins() {
+        let sql = "select t.id, t.trip_service_id, count(tb.id) as tbcnt
+from book.TRIP t
+join book.TRAVEL_BOOKING tb on tb.trip_id = t.id
+join book.MANUAL_BOOKING mb on mb.travel_booking_id = tb.id and mb.version = 2
+join book.MANUAL_BOOKING_V2_DETAILS mbd on mbd.manual_booking_id = mb.id
+where mbd.agent_notes is not null and mbd.agent_notes <> ''
+  and tb.agent_id = 1556
+group by t.id
+having tbcnt > 1";
+        let catalog = LintCatalog {
+            default_schema: Some("book".into()),
+            lower_case_table_names: 0,
+            schemas: vec![LintSchema {
+                name: "book".into(),
+                tables: vec![
+                    LintTable {
+                        name: "TRIP".into(),
+                        columns: vec!["id".into(), "trip_service_id".into()],
+                    },
+                    LintTable {
+                        name: "TRAVEL_BOOKING".into(),
+                        columns: vec!["id".into(), "trip_id".into(), "agent_id".into()],
+                    },
+                    LintTable {
+                        name: "MANUAL_BOOKING".into(),
+                        columns: vec!["id".into(), "travel_booking_id".into(), "version".into()],
+                    },
+                    LintTable {
+                        name: "MANUAL_BOOKING_V2_DETAILS".into(),
+                        columns: vec!["manual_booking_id".into(), "agent_notes".into()],
+                    },
+                ],
+            }],
+        };
+        let diags = lint_sql(sql, &catalog);
+        assert!(
+            diags.iter().all(|diag| !diag.message.contains("tbcnt")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
     fn having_accepts_a_select_alias() {
         let sql = "-- find a trip with multiple v2 manual booking notes... and possible trip note
 select t.id, count(tb.id) tbcnt

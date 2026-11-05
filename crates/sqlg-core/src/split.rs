@@ -144,11 +144,52 @@ fn push_part(out: &mut Vec<SqlStatement>, input: &str, start: usize, end: usize)
     }
     let from = start + lead;
     let to = end - trail;
+    let sql = &input[from..to];
+    if is_comment_only(sql) {
+        return;
+    }
     out.push(SqlStatement {
-        sql: input[from..to].to_string(),
+        sql: sql.to_string(),
         start: from,
         end: to,
     });
+}
+
+fn is_comment_only(sql: &str) -> bool {
+    let sql = sql.trim().trim_end_matches(';').trim();
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if ch == '#' || (ch == '-' && chars.get(i + 1) == Some(&'-') && line_comment_at(&chars, i))
+        {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if ch == '/' && chars.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(chars.len());
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+fn line_comment_at(chars: &[char], dash_at: usize) -> bool {
+    match chars.get(dash_at + 2).copied() {
+        None => true,
+        Some(ch) => ch.is_whitespace(),
+    }
 }
 
 fn split_scanned(input: &str) -> Vec<SqlStatement> {
@@ -258,6 +299,18 @@ mod tests {
         assert_eq!(parts[1].sql, "select 1;");
         assert!(parts[2].sql.contains("select 2"));
         assert_eq!(&sql[parts[0].start..parts[0].end], parts[0].sql);
+    }
+
+    #[test]
+    fn drops_comment_only_statements() {
+        let parts = split_statements("select 1; -- only a comment\n");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].sql, "select 1;");
+        let kept = split_statements("select 1; -- note\nselect 2");
+        assert_eq!(kept.len(), 2);
+        assert!(kept[1].sql.contains("select 2"));
+        let block = split_statements("select 1; /* still nothing */;");
+        assert_eq!(block.len(), 1);
     }
 
     #[test]

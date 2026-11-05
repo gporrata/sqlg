@@ -80,10 +80,10 @@ fn usage_and_conflict_and_missing() {
         .code(2);
 
     cmd(dir.path())
-        .args(["query", "dev", "-e", "select 1"])
+        .args(["query", "nope", "-e", "select 1"])
         .write_stdin("select 2\n")
         .assert()
-        .code(2);
+        .code(4);
 
     cmd(dir.path())
         .args(["query", "nope", "-e", "select 1"])

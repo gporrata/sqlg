@@ -2,8 +2,9 @@
 #
 #   make build     pnpm tauri build
 #   make install   quit sqlg, copy the bundle into /Applications, open it
+#   make clean     remove build output
 
-.PHONY: build install
+.PHONY: build install clean
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 BUNDLE := $(ROOT)/target/release/bundle/macos/sqlg.app
@@ -27,3 +28,7 @@ install:
 	xattr -dr com.apple.quarantine "$(APP)"
 	cmp "$(BUNDLE)/Contents/MacOS/sqlg-app" "$(APP)/Contents/MacOS/sqlg-app"
 	open "$(APP)"
+
+clean:
+	cargo clean --manifest-path "$(ROOT)/Cargo.toml"
+	rm -rf "$(ROOT)/dist"

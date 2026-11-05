@@ -27,9 +27,30 @@ export function clampPane(size: number, min: number, max: number): number {
   return Math.min(upper, Math.max(min, size));
 }
 
+export const resultMin = 96;
+export const sashSize = 10;
+export const resultsFloor = 200;
+
 export const paneDefaults = { schema: 250, editor: 520, editorHeight: 320 };
 export const paneMin = { schema: 160, editor: 220, editorHeight: 140 };
 export const columnMin = 72;
+
+export function schemaPaneMax(total: number, editor: boolean, results: boolean, stack: boolean): number {
+  if (editor && results && !stack) {
+    return total - paneMin.editor - resultsFloor - sashSize * 2;
+  }
+  const rest = editor ? paneMin.editor : results ? resultsFloor : 0;
+  return total - rest - (rest > 0 ? sashSize : 0);
+}
+
+export function editorPaneMax(total: number, schemaWidth: number, schemaVisible: boolean): number {
+  const schemaSpan = schemaVisible ? schemaWidth + sashSize : 0;
+  return total - schemaSpan - resultsFloor - sashSize;
+}
+
+export function editorHeightMax(total: number): number {
+  return total - resultsFloor - sashSize;
+}
 
 export function paneSize(value: number | null | undefined, fallback: number, min: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;

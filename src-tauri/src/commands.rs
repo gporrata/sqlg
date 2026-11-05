@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -6,8 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::Serialize;
 use sqlg_core::{
-    CliRequest, Connection, ConnectionPatch, Diagnostic, LintCatalog, WindowSnapshot, lint_sql,
-    statement_at,
+    CliRequest, Connection, ConnectionPatch, Diagnostic, LintCatalog, WindowSnapshot, atomic_write,
+    lint_sql, statement_at,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -99,14 +98,18 @@ pub fn update_connection(
         pools.remove(new_name.trim());
     }
     pools.remove(&updated.name);
+    drop(pools);
+    clear_explain(&state, &name);
+    clear_explain(&state, &updated.name);
     Ok(updated)
 }
 
 #[tauri::command]
 pub fn remove_connection(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    state.store().remove(&name).map_err(|err| err.to_string())?;
+    let removed = state.store().remove(&name).map_err(|err| err.to_string());
     state.pools.lock().expect("pools").remove(&name);
-    Ok(())
+    clear_explain(&state, &name);
+    removed
 }
 
 #[tauri::command]
@@ -150,6 +153,7 @@ pub async fn load_schema(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<SchemaSnapshot, String> {
+    clear_explain(&state, &name);
     let pool = pool_for(&state, &name).await?;
     db::load_schema(&pool).await
 }
@@ -291,12 +295,13 @@ pub fn read_text_file(path: String) -> Result<TextFile, String> {
 
 #[tauri::command]
 pub fn write_text_file(
+    state: State<'_, AppState>,
     path: String,
     text: String,
     newline: String,
     bom: bool,
 ) -> Result<(), String> {
-    let path = PathBuf::from(path);
+    let path = PathBuf::from(&path);
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -307,9 +312,8 @@ pub fn write_text_file(
     if bom {
         body.insert(0, '\u{feff}');
     }
-    let mut file = std::fs::File::create(&path).map_err(|err| err.to_string())?;
-    file.write_all(body.as_bytes())
-        .map_err(|err| err.to_string())?;
+    atomic_write(&path, body.as_bytes()).map_err(|err| err.to_string())?;
+    state.note_write(&path.to_string_lossy());
     Ok(())
 }
 
@@ -334,7 +338,11 @@ pub fn load_scratch(state: State<'_, AppState>) -> Vec<ScratchTab> {
 }
 
 #[tauri::command]
-pub fn save_scratch(state: State<'_, AppState>, window: String, tabs: Vec<ScratchTab>) -> Result<(), String> {
+pub fn save_scratch(
+    state: State<'_, AppState>,
+    window: String,
+    tabs: Vec<ScratchTab>,
+) -> Result<(), String> {
     state.save_scratch(&window, tabs)
 }
 
@@ -443,6 +451,7 @@ pub fn install_cli() -> Result<String, String> {
     let system = PathBuf::from("/usr/local/bin/sqlg");
     match link_cli(&source, &system) {
         Ok(()) => Ok(format!("linked {}", system.display())),
+        Err(err) if system.symlink_metadata().is_ok() => Err(err),
         Err(err) => {
             let local = local_bin();
             if let Some(parent) = local.parent() {
@@ -515,29 +524,48 @@ fn cli_binary() -> Option<PathBuf> {
 
 fn link_cli(source: &Path, dest: &Path) -> Result<(), String> {
     if dest.symlink_metadata().is_ok() {
-        std::fs::remove_file(dest).map_err(|err| err.to_string())?;
+        if let Err(err) = std::fs::remove_file(dest) {
+            if err.kind() == std::io::ErrorKind::PermissionDenied {
+                return admin_replace_link(source, dest);
+            }
+            return Err(err.to_string());
+        }
     }
     match std::os::unix::fs::symlink(source, dest) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            let script = format!(
-                "do shell script \"ln -sfn '{}' '{}'\" with administrator privileges",
-                escape_osascript(&source.display().to_string()),
-                escape_osascript(&dest.display().to_string())
-            );
-            let status = Command::new("osascript")
-                .arg("-e")
-                .arg(script)
-                .status()
-                .map_err(|os| os.to_string())?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err("administrator install was declined".into())
-            }
+            admin_replace_link(source, dest)
         }
         Err(err) => Err(err.to_string()),
     }
+}
+
+fn admin_replace_link(source: &Path, dest: &Path) -> Result<(), String> {
+    let script = format!(
+        "do shell script \"rm -f '{}' && ln -sfn '{}' '{}'\" with administrator privileges",
+        escape_osascript(&dest.display().to_string()),
+        escape_osascript(&source.display().to_string()),
+        escape_osascript(&dest.display().to_string())
+    );
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("administrator install was declined".into())
+    }
+}
+
+fn clear_explain(state: &AppState, name: &str) {
+    let prefix = format!("{name}\n");
+    state
+        .explain_cache
+        .lock()
+        .expect("explain")
+        .retain(|key, _| !key.starts_with(&prefix));
 }
 
 fn escape_osascript(value: &str) -> String {

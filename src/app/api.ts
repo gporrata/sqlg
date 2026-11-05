@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type { Connection, QueryEvent, SessionDocument, WindowSnapshot } from "./types";
 import type { SchemaSnapshot } from "../lib/schema";
+import { utf16ToUtf8Offset, utf8ToUtf16Offset } from "../lib/offsets";
 
 export type TextFile = { text: string; newline: string; bom: boolean };
 export type ScratchTab = {
@@ -27,7 +28,18 @@ export const api = {
   forgetRun: (runId: string) => invoke<void>("forget_run", { runId }),
   lint: (sql: string, catalog: unknown) => invoke<Diagnostic[]>("lint_sql_cmd", { sql, catalog }),
   explain: (name: string, sql: string) => invoke<string>("explain_sql", { name, sql }),
-  statementAt: (sql: string, cursor: number) => invoke<StatementRange | null>("statement_at_cmd", { sql, cursor }),
+  statementAt: async (sql: string, cursor: number) => {
+    const range = await invoke<StatementRange | null>("statement_at_cmd", {
+      sql,
+      cursor: utf16ToUtf8Offset(sql, cursor),
+    });
+    if (!range) return null;
+    return {
+      ...range,
+      start: utf8ToUtf16Offset(sql, range.start),
+      end: utf8ToUtf16Offset(sql, range.end),
+    };
+  },
   readText: (path: string) => invoke<TextFile>("read_text_file", { path }),
   writeText: (path: string, text: string, newline: string, bom: boolean) =>
     invoke<void>("write_text_file", { path, text, newline, bom }),

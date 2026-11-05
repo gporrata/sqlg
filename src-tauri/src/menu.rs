@@ -74,13 +74,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         true,
         Some("Shift+CmdOrCtrl+W"),
     )?;
-    let connections = MenuItem::with_id(
-        app,
-        "file-connections",
-        "Connections…",
-        true,
-        Some("CmdOrCtrl+,"),
-    )?;
+    let connections =
+        MenuItem::with_id(app, "file-connections", "Connections…", true, None::<&str>)?;
     let file_sep_a = PredefinedMenuItem::separator(app)?;
     let file_sep_b = PredefinedMenuItem::separator(app)?;
     let file_sep_c = PredefinedMenuItem::separator(app)?;
@@ -175,7 +170,7 @@ fn emit_menu(app: &AppHandle, id: &str) {
         .values()
         .find(|window| window.is_focused().unwrap_or(false));
     if let Some(window) = focused.or_else(|| windows.values().next()) {
-        let _ = window.emit("menu", id);
+        let _ = window.emit_to(window.label(), "menu", id);
     }
 }
 

@@ -166,7 +166,7 @@ describe("session boot", () => {
       for (let i = 0; i < 20 && !gate.closed; i += 1) await Promise.resolve();
     });
     expect(useApp.getState().closePrompt).toBeNull();
-    expect(gate.removed).toBe(false);
+    expect(gate.removed).toBe(true);
     expect(gate.closed).toBe(true);
     expect(gate.snapshots[gate.snapshots.length - 1]?.tabs.some((tab) => tab.sql === "select 1")).toBe(true);
   });

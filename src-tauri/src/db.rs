@@ -8,8 +8,10 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use sqlg_core::{Connection, split_statements};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Executor, Row, TypeInfo};
+use sqlx::{Column, Decode, Executor, Row, Type, TypeInfo, ValueRef};
 use tauri::ipc::Channel;
+
+const ROW_CAP: u64 = 1_000;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +74,7 @@ pub enum QueryEvent {
         rows_affected: Option<u64>,
         row_count: u64,
         elapsed_ms: u64,
+        truncated: bool,
     },
     StatementError {
         index: usize,
@@ -132,7 +135,7 @@ pub fn format_sqlx_error(err: &sqlx::Error) -> String {
 
 pub async fn connect_pool(connection: &Connection, password: &str) -> Result<MySqlPool, String> {
     MySqlPoolOptions::new()
-        .max_connections(4)
+        .max_connections(1)
         .acquire_timeout(Duration::from_secs(8))
         .connect(&mysql_url(connection, password))
         .await
@@ -309,6 +312,9 @@ pub async fn execute_script(
     {
         connection_id.store(id, Ordering::SeqCst);
     }
+    let _ = sqlx::query(&format!("set sql_select_limit = {}", ROW_CAP + 1))
+        .execute(&mut *conn)
+        .await;
 
     let mut failed = 0usize;
     let mut executed = 0usize;
@@ -383,6 +389,7 @@ async fn run_statement(
     let mut row_count = 0u64;
     let mut rows_affected: Option<u64> = None;
     let mut saw_rows = false;
+    let mut truncated = false;
 
     while let Some(item) = stream.next().await {
         if cancel.load(Ordering::SeqCst) {
@@ -395,6 +402,9 @@ async fn run_statement(
             }
             Ok(sqlx::Either::Right(row)) => {
                 saw_rows = true;
+                if truncated {
+                    continue;
+                }
                 if columns.is_none() {
                     let info = columns_of(&row);
                     let _ = channel.send(QueryEvent::Columns {
@@ -405,6 +415,18 @@ async fn run_statement(
                 }
                 batch.push(row_cells(&row));
                 row_count += 1;
+                if row_count > ROW_CAP {
+                    batch.pop();
+                    row_count -= 1;
+                    truncated = true;
+                    if !batch.is_empty() {
+                        let _ = channel.send(QueryEvent::Rows {
+                            index,
+                            rows: std::mem::take(&mut batch),
+                        });
+                    }
+                    continue;
+                }
                 if batch.len() >= 200 {
                     let _ = channel.send(QueryEvent::Rows {
                         index,
@@ -415,6 +437,9 @@ async fn run_statement(
             Err(err) => {
                 if cancel.load(Ordering::SeqCst) {
                     return Err(StatementStop::Cancelled);
+                }
+                if truncated {
+                    break;
                 }
                 return Err(StatementStop::Failed(format_sqlx_error(&err)));
             }
@@ -452,6 +477,7 @@ async fn run_statement(
         rows_affected: if saw_rows { None } else { rows_affected },
         row_count,
         elapsed_ms: elapsed(started),
+        truncated,
     });
     Ok(())
 }
@@ -510,7 +536,49 @@ fn cell_value(row: &MySqlRow, idx: usize) -> Option<String> {
     if let Ok(value) = row.try_get::<Option<Vec<u8>>, _>(idx) {
         return value.map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     }
+    if let Ok(value) = row.try_get::<Option<ShownValue>, _>(idx) {
+        return value.map(|shown| shown.0);
+    }
     None
+}
+
+struct ShownValue(String);
+
+impl Type<sqlx::MySql> for ShownValue {
+    fn type_info() -> <sqlx::MySql as sqlx::Database>::TypeInfo {
+        <String as Type<sqlx::MySql>>::type_info()
+    }
+
+    fn compatible(ty: &<sqlx::MySql as sqlx::Database>::TypeInfo) -> bool {
+        matches!(ty.name(), "DECIMAL" | "JSON" | "TIME" | "YEAR" | "BIT")
+    }
+}
+
+impl<'r> Decode<'r, sqlx::MySql> for ShownValue {
+    fn decode(
+        value: <sqlx::MySql as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        let info = ValueRef::type_info(&value);
+        let name = info.name();
+        if name.eq_ignore_ascii_case("BIT") {
+            let number = <u64 as Decode<sqlx::MySql>>::decode(value)?;
+            return Ok(ShownValue(number.to_string()));
+        }
+        if name.eq_ignore_ascii_case("TIME") {
+            let attempt = value.clone();
+            if let Ok(time) = <chrono::NaiveTime as Decode<sqlx::MySql>>::decode(attempt) {
+                return Ok(ShownValue(time.format("%H:%M:%S%.f").to_string()));
+            }
+            let attempt = value.clone();
+            if let Ok(time) =
+                <sqlx::mysql::types::MySqlTime as Decode<sqlx::MySql>>::decode(attempt)
+            {
+                return Ok(ShownValue(time.to_string()));
+            }
+        }
+        let text = <String as Decode<sqlx::MySql>>::decode(value)?;
+        Ok(ShownValue(text))
+    }
 }
 
 fn is_numeric(type_name: &str) -> bool {

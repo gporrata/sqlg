@@ -98,7 +98,13 @@ export function ConnectionsModal({
                 type="button"
                 aria-label="Remove connection"
                 onClick={() => {
-                  if (selected) void onRemove(selected).then(() => setSelected(connections.find((item) => item.name !== selected)?.name ?? ""));
+                  if (!selected) return;
+                  const name = selected;
+                  if (!window.confirm(`Delete connection "${name}"? This removes its saved password.`)) return;
+                  void onRemove(name).then(
+                    () => setSelected(connections.find((item) => item.name !== name)?.name ?? ""),
+                    (err: unknown) => setError(err instanceof Error ? err.message : String(err)),
+                  );
                 }}
               >
                 −

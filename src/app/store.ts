@@ -25,6 +25,9 @@ type AppState = {
   setLabel: (label: string) => void;
   setConnections: (connections: Connection[]) => void;
   setSchema: (name: string, schema: SchemaSnapshot) => void;
+  dropSchema: (name: string) => void;
+  clearSchemas: () => void;
+  renameConnection: (from: string, to: string) => void;
   setStatus: (name: string, status: "unknown" | "ok" | "down") => void;
   setConnectionsOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -62,6 +65,24 @@ export const useApp = create<AppState>((set, get) => ({
   setLabel: (label) => set({ label }),
   setConnections: (connections) => set({ connections }),
   setSchema: (name, schema) => set((state) => ({ schemas: { ...state.schemas, [name]: schema } })),
+  dropSchema: (name) =>
+    set((state) => {
+      if (!(name in state.schemas)) return {};
+      const schemas = { ...state.schemas };
+      delete schemas[name];
+      return { schemas };
+    }),
+  clearSchemas: () => set({ schemas: {} }),
+  renameConnection: (from, to) =>
+    set((state) => {
+      const schemas = { ...state.schemas };
+      delete schemas[from];
+      delete schemas[to];
+      return {
+        schemas,
+        tabs: state.tabs.map((tab) => (tab.connectionName === from ? { ...tab, connectionName: to } : tab)),
+      };
+    }),
   setStatus: (name, status) => set((state) => ({ status: { ...state.status, [name]: status } })),
   setConnectionsOpen: (connectionsOpen) => set({ connectionsOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
@@ -117,6 +138,7 @@ function reduceQuery(tab: Tab, event: QueryEvent): Tab {
       error: null,
       elapsedMs: null,
       done: false,
+      truncated: false,
     };
     const results = tab.results.filter((item) => item.index !== event.index);
     results.push(section);
@@ -140,6 +162,7 @@ function reduceQuery(tab: Tab, event: QueryEvent): Tab {
         rowCount: event.rowCount,
         elapsedMs: event.elapsedMs,
         done: true,
+        truncated: event.truncated === true,
       };
     }
     if (event.kind === "statementError") {

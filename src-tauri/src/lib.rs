@@ -3,6 +3,8 @@ mod commands;
 mod db;
 mod menu;
 mod state;
+#[cfg(target_os = "macos")]
+mod titlebar;
 mod windows;
 
 use tauri::{Emitter, Manager};
@@ -31,6 +33,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::Focused(true) = event {
+                if let Ok(ns_window) = window.ns_window() {
+                    titlebar::install(ns_window);
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<AppState>();
                 let allowed = state.allow_close.load(std::sync::atomic::Ordering::SeqCst)
@@ -42,7 +50,7 @@ pub fn run() {
                 if !allowed {
                     api.prevent_close();
                     let quitting = state.quitting.load(std::sync::atomic::Ordering::SeqCst);
-                    let _ = window.emit("native-close", quitting);
+                    let _ = window.emit_to(window.label(), "native-close", quitting);
                 }
             }
         })

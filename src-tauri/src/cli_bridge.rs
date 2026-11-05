@@ -35,7 +35,7 @@ pub fn ingest(app: &AppHandle, args: &[String]) {
             .expect("pending")
             .insert(label.clone(), request);
         if let Some(window) = app.get_webview_window(&label) {
-            let _ = window.emit("cli-request", ());
+            let _ = window.emit_to(label.as_str(), "cli-request", ());
         }
         return;
     }
@@ -46,7 +46,7 @@ pub fn ingest(app: &AppHandle, args: &[String]) {
         .expect("pending")
         .insert(label.clone(), request);
     if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.emit("cli-request", ());
+        let _ = window.emit_to(label.as_str(), "cli-request", ());
     }
 }
 
@@ -64,6 +64,9 @@ pub fn watch_connections(app: &AppHandle) -> Result<(), String> {
                 .iter()
                 .any(|path| path.ends_with("connections.toml"));
             if interesting {
+                let state = handle.state::<AppState>();
+                state.pools.lock().expect("pools").clear();
+                state.explain_cache.lock().expect("explain").clear();
                 let _ = handle.emit("connections-changed", ());
             }
         })
@@ -85,6 +88,10 @@ pub fn watch_file(app: &AppHandle, path: String) -> Result<(), String> {
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
             if result.is_ok() {
+                let state = handle.state::<AppState>();
+                if state.wrote_recently(&watched) {
+                    return;
+                }
                 let _ = handle.emit("file-changed", serde_json::json!({ "path": watched }));
             }
         })

@@ -14,6 +14,12 @@ export async function windowRect(): Promise<Rect | null> {
   return { x: pos.x, y: pos.y, width: size.width, height: size.height };
 }
 
+const TITLE_DRAG_BLOCK = "button, a, input, select, textarea, .pill";
+
+export function shouldDragTitle(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(TITLE_DRAG_BLOCK) == null;
+}
+
 let suppressTitleClick = false;
 
 export function consumeTitleClick(): boolean {

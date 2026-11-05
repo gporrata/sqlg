@@ -24,6 +24,7 @@ export type ResultSection = {
   error: string | null;
   elapsedMs: number | null;
   done: boolean;
+  truncated?: boolean;
 };
 
 export type FooterState = {
@@ -98,7 +99,7 @@ export type QueryEvent =
   | { kind: "begin"; runId: string; index: number; total: number; sql: string }
   | { kind: "columns"; index: number; columns: ColumnInfo[] }
   | { kind: "rows"; index: number; rows: (string | null)[][] }
-  | { kind: "statementDone"; index: number; rowsAffected: number | null; rowCount: number; elapsedMs: number }
+  | { kind: "statementDone"; index: number; rowsAffected: number | null; rowCount: number; elapsedMs: number; truncated?: boolean }
   | { kind: "statementError"; index: number; message: string }
   | { kind: "finished"; ok: boolean; executed: number; total: number; failed: number; elapsedMs: number; cancelled: boolean };
 

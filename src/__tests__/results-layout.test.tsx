@@ -2,17 +2,50 @@
  * @vitest-environment jsdom
  */
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { makeTab, type ResultSection } from "../app/types";
 import { fitColumnWidth, jsonPreview } from "../lib/cells";
-import { columnWidths, Results } from "../components/Results";
+import { resultMin, sashSize } from "../lib/layout";
+import { columnKeys, columnWidths, Results } from "../components/Results";
+import { PaneSplit } from "../components/PaneSplit";
 import { Footer } from "../components/Footer";
 import { SettingsModal } from "../components/SettingsModal";
 import { Toolbar } from "../components/Toolbar";
 
+const previousObserver = globalThis.ResizeObserver;
+const previousPointer = globalThis.PointerEvent;
+
 beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 800 });
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  if (!HTMLElement.prototype.setPointerCapture) HTMLElement.prototype.setPointerCapture = () => undefined;
+  if (!HTMLElement.prototype.releasePointerCapture) HTMLElement.prototype.releasePointerCapture = () => undefined;
+  if (typeof globalThis.PointerEvent === "undefined") {
+    class PointerEventPolyfill extends MouseEvent {
+      pointerId: number;
+      constructor(type: string, props: MouseEventInit & { pointerId?: number } = {}) {
+        super(type, props);
+        this.pointerId = props.pointerId ?? 1;
+      }
+    }
+    globalThis.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent;
+  }
+  globalThis.ResizeObserver = class {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      const rect = { width: 800, height: 800, top: 0, left: 0, bottom: 800, right: 800, x: 0, y: 0, toJSON: () => ({}) };
+      this.callback([{ target, contentRect: rect } as ResizeObserverEntry], this as unknown as ResizeObserver);
+    }
+    unobserve() {}
+    disconnect() {}
+  } as typeof ResizeObserver;
+});
+
+afterAll(() => {
+  if (previousObserver) globalThis.ResizeObserver = previousObserver;
+  else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  if (previousPointer) globalThis.PointerEvent = previousPointer;
+  else Reflect.deleteProperty(globalThis, "PointerEvent");
 });
 
 const section: ResultSection = {
@@ -27,22 +60,68 @@ const section: ResultSection = {
   done: true,
 };
 
+function paneHeights(container: HTMLElement): string[] {
+  return [...container.querySelectorAll<HTMLElement>(".split-pane-pane")].map((pane) => pane.style.height);
+}
+
 describe("results and layout buttons", () => {
   it("shares result column width and keeps a dragged column", () => {
     expect(columnWidths(["a", "b"], {}, 240)).toEqual([120, 120]);
     expect(columnWidths(["a", "b"], { a: 180 }, 240)).toEqual([180, 72]);
+    expect(columnWidths(columnKeys(["id", "id"]), { id: 180 }, 240)).toEqual([180, 72]);
   });
   it("leaves null result values blank and fills one result set", () => {
     const { container } = render(<Results sections={[section]} restored={false} />);
     expect(screen.getByText("Ada")).toBeTruthy();
     expect(screen.queryByText("null")).toBeNull();
     expect(container.querySelector(".stack.solo")).toBeTruthy();
+    expect(container.querySelector(".split-pane")).toBeNull();
   });
 
   it("keeps several result sets stacked", () => {
-    const { container } = render(<Results sections={[section, { ...section, index: 1 }]} restored={false} />);
+    const sections = [section, { ...section, index: 1 }, { ...section, index: 2 }];
+    const { container } = render(<Results sections={sections} restored={false} />);
     expect(container.querySelector(".stack.solo")).toBeNull();
-    expect(container.querySelector(".stack")).toBeTruthy();
+    const split = container.querySelector<HTMLElement>(".stack.many .split-pane");
+    expect(split).toBeTruthy();
+    expect(split?.style.minHeight).toBe(`${sections.length * resultMin + (sections.length - 1) * sashSize}px`);
+    expect(split?.style.overflow).toBe("visible");
+    const panes = [...container.querySelectorAll<HTMLElement>(".split-pane-pane")];
+    expect(panes).toHaveLength(3);
+    expect(panes.every((pane) => pane.style.overflow === "visible")).toBe(true);
+    expect(container.querySelectorAll(".sec")).toHaveLength(3);
+    expect(paneHeights(container)).toEqual(["260px", "260px", "260px"]);
+    const splits = within(container).getAllByRole("separator");
+    expect(splits.map((node) => node.getAttribute("aria-label"))).toEqual(["horizontal divider 1", "horizontal divider 2"]);
+    expect(splits.every((node) => node.classList.contains("split-pane-divider") && node.classList.contains("split") && node.classList.contains("y") && node.getAttribute("aria-orientation") === "horizontal")).toBe(true);
+    expect(splits.map((node) => (node as HTMLElement).style.height)).toEqual([`${sashSize}px`, `${sashSize}px`]);
+  });
+
+  it("keeps dragged result pane sizes when a result set goes away", async () => {
+    const three = [section, { ...section, index: 1 }, { ...section, index: 2 }];
+    const { container, rerender } = render(<Results sections={three} restored={false} />);
+    const divider = within(container).getAllByRole("separator")[0];
+    await act(async () => {
+      fireEvent.pointerDown(divider, { button: 0, clientY: 100, pointerId: 1, pointerType: "mouse" });
+    });
+    await act(async () => {
+      fireEvent.pointerMove(document, { clientY: 150, pointerId: 1, pointerType: "mouse" });
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    });
+    expect(paneHeights(container)).toEqual(["310px", "210px", "260px"]);
+    rerender(<Results sections={[section, { ...section, index: 1 }]} restored={false} />);
+    expect(paneHeights(container)).toEqual(["310px", "210px"]);
+  });
+
+  it("resizes from any part of the pane splitter", () => {
+    const onSize = vi.fn();
+    render(<PaneSplit axis="y" label="Resize editor" size={() => 200} onSize={onSize} min={140} max={() => 600} />);
+    const handle = screen.getByRole("separator", { name: "Resize editor" });
+    expect((handle as HTMLElement).style.height).toBe(`${sashSize}px`);
+    fireEvent.pointerDown(handle, { button: 0, clientY: 40, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 90, pointerId: 1 });
+    expect(onSize).toHaveBeenCalledWith(250);
+    fireEvent.pointerUp(handle, { clientY: 90, pointerId: 1 });
   });
 
   it("hides the database user in the footer", () => {

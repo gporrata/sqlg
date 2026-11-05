@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use notify::RecommendedWatcher;
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,7 @@ pub struct AppState {
     pub runs: Mutex<HashMap<String, RunControl>>,
     pub pending: Mutex<HashMap<String, CliRequest>>,
     pub explain_cache: Mutex<HashMap<String, String>>,
+    pub recent_writes: Mutex<HashMap<String, Instant>>,
     pub watchers: Mutex<Vec<RecommendedWatcher>>,
     pub file_watchers: Mutex<HashMap<String, RecommendedWatcher>>,
     pub quitting: AtomicBool,
@@ -61,6 +63,7 @@ impl AppState {
             runs: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             explain_cache: Mutex::new(HashMap::new()),
+            recent_writes: Mutex::new(HashMap::new()),
             watchers: Mutex::new(Vec::new()),
             file_watchers: Mutex::new(HashMap::new()),
             quitting: AtomicBool::new(false),
@@ -70,6 +73,21 @@ impl AppState {
             quit_acks: AtomicUsize::new(0),
             session_lock: Mutex::new(()),
         }
+    }
+
+    pub fn note_write(&self, path: &str) {
+        let mut writes = self.recent_writes.lock().expect("writes");
+        let now = Instant::now();
+        writes.retain(|_, at| now.saturating_duration_since(*at) < Duration::from_secs(2));
+        writes.insert(path.to_string(), now);
+    }
+
+    pub fn wrote_recently(&self, path: &str) -> bool {
+        self.recent_writes
+            .lock()
+            .expect("writes")
+            .get(path)
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(750))
     }
 
     pub fn store(&self) -> Store {

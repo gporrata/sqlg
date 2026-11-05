@@ -10,6 +10,7 @@ import { tags } from "@lezer/highlight";
 import { api, type Diagnostic } from "../app/api";
 import { useApp } from "../app/store";
 import { themeById } from "../app/themes";
+import { utf8ToUtf16Offset } from "../lib/offsets";
 import { completionSchema, lintCatalog } from "../lib/schema";
 import { selectedText } from "../lib/dirty";
 import type { Tab } from "../app/types";
@@ -230,8 +231,9 @@ function sqlLinter() {
     const snapshot = tab?.connectionName ? useApp.getState().schemas[tab.connectionName] : undefined;
     const connection = useApp.getState().connections.find((item) => item.name === tab?.connectionName);
     try {
-      const found = await api.lint(view.state.doc.toString(), lintCatalog(snapshot, connection?.schema ?? null));
-      return found.map(toCm);
+      const sql = view.state.doc.toString();
+      const found = await api.lint(sql, lintCatalog(snapshot, connection?.schema ?? null));
+      return found.map((diag) => toCm(sql, diag));
     } catch {
       return [];
     }
@@ -257,10 +259,12 @@ function explainLinter() {
   }, { delay: 1000 });
 }
 
-function toCm(diag: Diagnostic): CmDiagnostic {
+function toCm(sql: string, diag: Diagnostic): CmDiagnostic {
+  const from = utf8ToUtf16Offset(sql, diag.from);
+  const to = utf8ToUtf16Offset(sql, diag.to);
   return {
-    from: diag.from,
-    to: Math.max(diag.to, diag.from),
+    from,
+    to: Math.max(to, from),
     severity: diag.severity === "warning" ? "warning" : "error",
     message: diag.message,
     actions: diag.actions.map((action) => ({

@@ -1,8 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { clampPane } from "../lib/layout";
-
-const hoverDelayMs = 300;
+import { clampPane, sashSize } from "../lib/layout";
 
 export function PaneSplit({
   axis,
@@ -20,21 +18,14 @@ export function PaneSplit({
   max: () => number;
 }) {
   const [hot, setHot] = useState(false);
-  const hoverTimer = useRef<number | null>(null);
+  const [drag, setDrag] = useState(false);
   const dragging = useRef(false);
-  const clearHoverTimer = () => {
-    if (hoverTimer.current != null) {
-      window.clearTimeout(hoverTimer.current);
-      hoverTimer.current = null;
-    }
-  };
-  useEffect(() => clearHoverTimer, []);
   const down = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    clearHoverTimer();
     dragging.current = true;
+    setDrag(true);
     setHot(true);
     const origin = size();
     const start = axis === "x" ? event.clientX : event.clientY;
@@ -46,6 +37,7 @@ export function PaneSplit({
     };
     const end = () => {
       dragging.current = false;
+      setDrag(false);
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", end);
       target.removeEventListener("pointercancel", end);
@@ -55,18 +47,16 @@ export function PaneSplit({
     target.addEventListener("pointerup", end);
     target.addEventListener("pointercancel", end);
   };
+  const axisClass = axis === "x" ? "split x" : "split y";
   return (
     <div
-      className={hot ? (axis === "x" ? "split x on" : "split y on") : axis === "x" ? "split x" : "split y"}
+      className={[axisClass, hot ? "on" : "", drag ? "dragging" : ""].filter(Boolean).join(" ")}
+      style={axis === "x" ? { width: sashSize } : { height: sashSize }}
       role="separator"
       aria-orientation={axis === "x" ? "vertical" : "horizontal"}
       aria-label={label}
-      onPointerEnter={() => {
-        clearHoverTimer();
-        hoverTimer.current = window.setTimeout(() => setHot(true), hoverDelayMs);
-      }}
+      onPointerEnter={() => setHot(true)}
       onPointerLeave={() => {
-        clearHoverTimer();
         if (!dragging.current) setHot(false);
       }}
       onPointerDown={down}

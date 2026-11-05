@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import { Pane, SplitPane } from "react-split-pane";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { snippet } from "../lib/titles";
 import { formatElapsed } from "../lib/footer";
 import { columnGroups } from "../lib/columns";
 import { cellText, columnSizeAction, fitColumnWidth, isJsonType, prettyJson } from "../lib/cells";
-import { columnMin } from "../lib/layout";
+import { columnMin, resultMin, sashSize } from "../lib/layout";
 import { typeTone, type SchemaSnapshot } from "../lib/schema";
 import type { ColumnInfo, ResultSection } from "../app/types";
 
@@ -13,7 +14,16 @@ const headerMenuDelay = 220;
 
 type Pop =
   | { kind: "cell"; name: string; value: string | null; json: boolean; x: number; y: number }
-  | { kind: "header"; name: string; x: number; y: number };
+  | { kind: "header"; name: string; key: string; x: number; y: number };
+
+export function columnKeys(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((name) => {
+    const count = seen.get(name) ?? 0;
+    seen.set(name, count + 1);
+    return count === 0 ? name : `${name}\0${count}`;
+  });
+}
 
 export function columnWidths(names: string[], overrides: Record<string, number>, gridWidth: number): number[] {
   const used = names.reduce((sum, name) => sum + (overrides[name] ?? 0), 0);
@@ -50,20 +60,64 @@ export function Results({
   return (
     <section className="right">
       {bar}
-      <div className={sections.length === 1 ? "stack solo" : "stack"}>
-        {sections.map((section) => (
-          <ResultBlock
-            key={section.index}
-            section={section}
-            columnWidths={savedWidths}
-            onColumnWidth={onColumnWidth}
-            schema={schema}
-            defaultSchema={defaultSchema}
-            showTypes={showTypes}
-          />
-        ))}
-      </div>
+      <ResultStack
+        sections={sections}
+        columnWidths={savedWidths}
+        onColumnWidth={onColumnWidth}
+        schema={schema}
+        defaultSchema={defaultSchema}
+        showTypes={showTypes}
+      />
     </section>
+  );
+}
+
+function ResultStack({
+  sections,
+  columnWidths: savedWidths,
+  onColumnWidth,
+  schema,
+  defaultSchema,
+  showTypes,
+}: {
+  sections: ResultSection[];
+  columnWidths: Record<string, number>;
+  onColumnWidth?: (name: string, width: number | null) => void;
+  schema?: SchemaSnapshot;
+  defaultSchema?: string | null;
+  showTypes: boolean;
+}) {
+  const block = (section: ResultSection) => (
+    <ResultBlock
+      key={section.index}
+      section={section}
+      columnWidths={savedWidths}
+      onColumnWidth={onColumnWidth}
+      schema={schema}
+      defaultSchema={defaultSchema}
+      showTypes={showTypes}
+    />
+  );
+  if (sections.length < 2) {
+    return <div className="stack solo">{sections.map(block)}</div>;
+  }
+  const minHeight = sections.length * resultMin + (sections.length - 1) * sashSize;
+  return (
+    <div className="stack many">
+      <SplitPane
+        direction="vertical"
+        dividerSize={sashSize}
+        dividerClassName="split y"
+        dividerStyle={{ height: sashSize }}
+        style={{ minHeight, overflow: "visible" }}
+      >
+        {sections.map((section) => (
+          <Pane key={section.index} minSize={resultMin} style={{ overflow: "visible", display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {block(section)}
+          </Pane>
+        ))}
+      </SplitPane>
+    </div>
   );
 }
 
@@ -142,9 +196,10 @@ function ResultBlock({
   }, []);
   const failed = section.error != null;
   const names = shown.map((item) => item.column.name);
-  const widths = columnWidths(names, overrides, gridWidth);
+  const keys = columnKeys(names);
+  const widths = columnWidths(keys, overrides, gridWidth);
   const rowWidth = Math.max(gridWidth, widths.reduce((sum, width) => sum + width, 0));
-  const resizeColumn = (name: string, event: ReactPointerEvent<HTMLElement>) => {
+  const resizeColumn = (shownIndex: number, event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -153,13 +208,14 @@ function ResultBlock({
       menuTimer.current = null;
     }
     setPop(null);
-    const origin = widths[names.indexOf(name)] ?? columnMin;
+    const key = keys[shownIndex];
+    const origin = widths[shownIndex] ?? columnMin;
     const start = event.clientX;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const next = Math.max(columnMin, origin + pointer.clientX - start);
-      setColumnWidth(name, next);
+      setColumnWidth(key, next);
     };
     const end = () => {
       target.removeEventListener("pointermove", move);
@@ -181,31 +237,36 @@ function ResultBlock({
       });
     }
   };
-  const valuesFor = (name: string) => {
-    const item = shown.find((entry) => entry.column.name === name);
+  const valuesAt = (shownIndex: number) => {
+    const item = shown[shownIndex];
     if (!item) return [];
     return section.rows.map((row) => row?.[item.index] ?? null);
   };
-  const widenColumn = (name: string) => {
-    const item = shown.find((entry) => entry.column.name === name);
-    if (!item) return;
-    const fitted = fitColumnWidth(item.column.name, item.column.typeName, valuesFor(name), showTypes);
-    const current = widths[names.indexOf(name)] ?? columnMin;
-    setColumnWidth(name, Math.max(current, fitted));
+  const widenColumn = (shownIndex: number) => {
+    const item = shown[shownIndex];
+    const key = keys[shownIndex];
+    if (!item || !key) return;
+    const fitted = fitColumnWidth(item.column.name, item.column.typeName, valuesAt(shownIndex), showTypes);
+    const current = widths[shownIndex] ?? columnMin;
+    setColumnWidth(key, Math.max(current, fitted));
   };
-  const openHeaderMenu = (name: string, event: ReactMouseEvent<HTMLElement>) => {
+  const openHeaderMenu = (shownIndex: number, event: ReactMouseEvent<HTMLElement>) => {
     if (event.detail > 1) return;
+    const item = shown[shownIndex];
+    const key = keys[shownIndex];
+    if (!item || !key) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (menuTimer.current != null) window.clearTimeout(menuTimer.current);
     menuTimer.current = window.setTimeout(() => {
       menuTimer.current = null;
-      setPop({ kind: "header", name, x: rect.left, y: rect.bottom + 4 });
+      setPop({ kind: "header", name: item.column.name, key, x: rect.left, y: rect.bottom + 4 });
     }, headerMenuDelay);
   };
-  const headerAction = pop?.kind === "header" ? pop.name : "";
-  const headerFitted = headerAction ? fitColumnWidth(headerAction, shown.find((entry) => entry.column.name === headerAction)?.column.typeName ?? "", valuesFor(headerAction), showTypes) : 0;
-  const headerCurrent = headerAction ? (widths[names.indexOf(headerAction)] ?? columnMin) : 0;
-  const headerSize = columnSizeAction(headerAction ? overrides[headerAction] != null : false, headerCurrent, headerFitted);
+  const headerIndex = pop?.kind === "header" ? keys.indexOf(pop.key) : -1;
+  const headerItem = headerIndex >= 0 ? shown[headerIndex] : undefined;
+  const headerFitted = headerItem ? fitColumnWidth(headerItem.column.name, headerItem.column.typeName, valuesAt(headerIndex), showTypes) : 0;
+  const headerCurrent = headerIndex >= 0 ? (widths[headerIndex] ?? columnMin) : 0;
+  const headerSize = columnSizeAction(headerIndex >= 0 ? overrides[keys[headerIndex]] != null : false, headerCurrent, headerFitted);
   return (
     <div className={failed ? (menu ? "sec bad menu" : "sec bad") : menu ? "sec menu" : "sec"}>
       <div className="sh">
@@ -214,7 +275,7 @@ function ResultBlock({
         <span>
           {section.done && !failed
             ? section.columns.length
-              ? `${section.rowCount} rows`
+              ? `${section.rowCount} rows${section.truncated ? " · truncated" : ""}`
               : section.rowsAffected != null
                 ? `${section.rowsAffected} rows affected`
                 : `${section.rowCount} rows`
@@ -257,12 +318,12 @@ function ResultBlock({
                 key={item.index}
                 className={item.column.numeric ? "num cell head" : "cell head"}
                 style={{ width: widths[index] }}
-                onClick={(event) => openHeaderMenu(item.column.name, event)}
+                onClick={(event) => openHeaderMenu(index, event)}
                 onDoubleClick={(event) => {
                   event.preventDefault();
                   if (menuTimer.current != null) window.clearTimeout(menuTimer.current);
                   setPop(null);
-                  widenColumn(item.column.name);
+                  widenColumn(index);
                 }}
               >
                 <span className="hn">{item.column.name}</span>
@@ -307,7 +368,7 @@ function ResultBlock({
           <div className="colrules">
             {names.map((name, index) => {
               const left = widths.slice(0, index + 1).reduce((sum, width) => sum + width, 0) - scrollLeft;
-              return <i key={`${shown[index]?.index ?? index}:${name}`} className="colsplit" style={{ left }} onPointerDown={(event) => resizeColumn(name, event)} />;
+              return <i key={`${shown[index]?.index ?? index}:${name}`} className="colsplit" style={{ left }} onPointerDown={(event) => resizeColumn(index, event)} />;
             })}
           </div>
         </div>
@@ -328,8 +389,8 @@ function ResultBlock({
           action={headerSize}
           onClose={() => setPop(null)}
           onAction={() => {
-            if (headerSize === "narrow") setColumnWidth(pop.name, null);
-            else widenColumn(pop.name);
+            if (headerSize === "narrow") setColumnWidth(pop.key, null);
+            else widenColumn(keys.indexOf(pop.key));
             setPop(null);
           }}
         />

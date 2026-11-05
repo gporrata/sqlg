@@ -2,7 +2,7 @@ import type { PointerEvent } from "react";
 import { badgeTone } from "../lib/badge";
 import { isDirty } from "../lib/dirty";
 import { deriveTitle, tabTooltip } from "../lib/titles";
-import { consumeTitleClick, trackWindowDrag } from "../lib/windowChrome";
+import { consumeTitleClick, shouldDragTitle, trackWindowDrag } from "../lib/windowChrome";
 import { useApp } from "../app/store";
 import type { Connection, Tab } from "../app/types";
 
@@ -34,8 +34,7 @@ export function TabStrip({ onClose, onNew }: { onClose: (id: string) => void; on
 
 function beginTitleDrag(event: PointerEvent<HTMLDivElement>) {
   if (event.button !== 0) return;
-  const target = event.target;
-  if (!(target instanceof Element) || target.closest("button, a, input, select, textarea")) return;
+  if (!shouldDragTitle(event.target)) return;
   trackWindowDrag(event.screenX, event.screenY);
 }
 

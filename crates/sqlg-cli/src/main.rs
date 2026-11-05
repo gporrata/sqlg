@@ -337,9 +337,13 @@ fn query(
         eprintln!("pass only one of --tab or --new-window");
         return 2;
     }
-    let stdin_sql = match read_piped_stdin() {
-        Ok(sql) => sql,
-        Err(code) => return code,
+    let stdin_sql = if execute.is_some() || file.is_some() {
+        None
+    } else {
+        match read_piped_stdin() {
+            Ok(sql) => sql,
+            Err(code) => return code,
+        }
     };
     let sources = [execute.is_some(), file.is_some(), stdin_sql.is_some()]
         .into_iter()

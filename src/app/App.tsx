@@ -7,7 +7,7 @@ import { api, type CliPending } from "./api";
 import { useApp } from "./store";
 import { makeTab, type QueryEvent, type Tab, type WindowSnapshot } from "./types";
 import { isDirty, needsFileSave, selectedText } from "../lib/dirty";
-import { layoutMode, paneDefaults, paneMin, paneSize, panes, savedColumnWidths } from "../lib/layout";
+import { clampPane, editorHeightMax, editorPaneMax, layoutMode, paneDefaults, paneMin, paneSize, panes, resultsFloor, sashSize, savedColumnWidths, schemaPaneMax } from "../lib/layout";
 import { claimRun } from "../lib/runLock";
 import { executionSummary } from "../lib/footer";
 import { applyTheme, themeById } from "./themes";
@@ -25,6 +25,11 @@ import { WindowEdges } from "../components/WindowEdges";
 
 const filters = [{ name: "SQL", extensions: ["sql"] }];
 let sessionOpen = false;
+
+function changesSchema(sql: string): boolean {
+  const stripped = sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ").trim();
+  return /^(alter|create|drop|rename|truncate)\b/i.test(stripped);
+}
 
 function schemaErrorText(error: unknown): string {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "Could not load schemas";
@@ -115,6 +120,33 @@ export default function App() {
   }, [tab?.connectionName, schemas, schemaRetry]);
 
   useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !sessionReady) return;
+    const apply = () => {
+      const state = useApp.getState();
+      const total = body.clientWidth;
+      if (total <= 0) return;
+      const nextSchema = clampPane(state.schemaWidth, paneMin.schema, schemaPaneMax(total, layout.editor, layout.results, layout.stack));
+      if (nextSchema !== state.schemaWidth) setSchemaWidth(nextSchema);
+      if (layout.editor && layout.results && !layout.stack) {
+        const nextEditor = clampPane(state.editorWidth, paneMin.editor, editorPaneMax(total, nextSchema, layout.schema));
+        if (nextEditor !== state.editorWidth) setEditorWidth(nextEditor);
+      }
+      const pile = pileRef.current;
+      if (pile && layout.stack && layout.editor && layout.results && pile.clientHeight > 0) {
+        const nextHeight = clampPane(state.editorHeight, paneMin.editorHeight, editorHeightMax(pile.clientHeight));
+        if (nextHeight !== state.editorHeight) setEditorHeight(nextHeight);
+      }
+    };
+    apply();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(apply);
+    observer.observe(body);
+    if (pileRef.current) observer.observe(pileRef.current);
+    return () => observer.disconnect();
+  }, [sessionReady, layout.editor, layout.results, layout.stack, layout.schema, setSchemaWidth, setEditorWidth, setEditorHeight]);
+
+  useEffect(() => {
     // The first paint is one empty tab. Writing it before loadSession returns replaces saved tabs.
     if (!sessionReady) return;
     const timer = window.setTimeout(() => void persistWindow(), 400);
@@ -167,16 +199,12 @@ export default function App() {
             label="Resize schema"
             size={() => schemaWidth}
             min={paneMin.schema}
-            max={() => {
-              const total = bodyRef.current?.clientWidth ?? 1200;
-              const floor = layout.editor && layout.results && !layout.stack ? paneMin.editor + 200 : 220;
-              return total - floor;
-            }}
+            max={() => schemaPaneMax(bodyRef.current?.clientWidth ?? 1200, layout.editor, layout.results, layout.stack)}
             onSize={(next) => {
               setSchemaWidth(next);
               if (!(layout.editor && layout.results) || layout.stack) return;
               const total = bodyRef.current?.clientWidth ?? 0;
-              const room = total - 200 - next;
+              const room = total - resultsFloor - sashSize * 2 - next;
               if (useApp.getState().editorWidth > room) setEditorWidth(Math.max(paneMin.editor, room));
             }}
           />
@@ -202,7 +230,7 @@ export default function App() {
                 label="Resize editor"
                 size={() => editorHeight}
                 min={paneMin.editorHeight}
-                max={() => (pileRef.current?.clientHeight ?? 800) - 160}
+                max={() => editorHeightMax(pileRef.current?.clientHeight ?? 800)}
                 onSize={setEditorHeight}
               />
             ) : null}
@@ -240,11 +268,7 @@ export default function App() {
                 label="Resize editor"
                 size={() => editorWidth}
                 min={paneMin.editor}
-                max={() => {
-                  const total = bodyRef.current?.clientWidth ?? 1200;
-                  const schema = layout.schema ? schemaWidth + 12 : 0;
-                  return total - schema - 200;
-                }}
+                max={() => editorPaneMax(bodyRef.current?.clientWidth ?? 1200, schemaWidth, layout.schema)}
                 onSize={setEditorWidth}
               />
             ) : null}
@@ -348,23 +372,27 @@ async function boot(stopped: () => boolean, unlisten: Array<() => void>): Promis
     }
   }
   await refreshConnections();
+  const scoped = { target: label };
   unlisten.push(
     await listen<string>("menu", (event) => {
       void onMenu(event.payload);
-    }),
+    }, scoped),
   );
   unlisten.push(
     await listen<string>("theme-changed", (event) => {
       useApp.getState().setTheme(themeById(event.payload).id);
     }),
   );
-  unlisten.push(await listen("connections-changed", () => void refreshConnections()));
-  unlisten.push(await listen("cli-request", () => void takeCli(label)));
+  unlisten.push(await listen("connections-changed", () => {
+    useApp.getState().clearSchemas();
+    void refreshConnections();
+  }));
+  unlisten.push(await listen("cli-request", () => void takeCli(label), scoped));
   unlisten.push(
     await listen<boolean>("native-close", (event) => {
       if (event.payload) void saveAndAck();
       else void closeWindow();
-    }),
+    }, scoped),
   );
   unlisten.push(await listen("prepare-quit", () => void saveAndAck()));
   unlisten.push(
@@ -380,7 +408,11 @@ async function boot(stopped: () => boolean, unlisten: Array<() => void>): Promis
     }),
   );
   await takeCli(label);
-  await win.setTitle("sqlg");
+  try {
+    await win.setTitle("sqlg");
+  } catch {
+    /* a missing title permission should not block the session */
+  }
   return !stopped();
 }
 
@@ -426,6 +458,8 @@ async function changeTheme(theme: string) {
 }
 
 async function runSql(tab: Tab, sql: string, from: number, to: number) {
+  const current = fresh(tab.id) ?? tab;
+  if (current.running) return;
   if (!claimRun()) return;
   if (!tab.connectionName) {
     useApp.getState().setNotice("Choose a connection before running.");
@@ -440,7 +474,12 @@ async function runSql(tab: Tab, sql: string, from: number, to: number) {
     flash: { from, to, token: Date.now() },
   });
   const channel = new Channel<QueryEvent>();
-  channel.onmessage = (event) => useApp.getState().applyQuery(tab.id, event);
+  channel.onmessage = (event) => {
+    useApp.getState().applyQuery(tab.id, event);
+    if (event.kind !== "statementDone" || event.rowsAffected == null || !tab.connectionName) return;
+    const statement = useApp.getState().tabs.find((item) => item.id === tab.id)?.results.find((section) => section.index === event.index)?.sql;
+    if (statement && changesSchema(statement)) useApp.getState().dropSchema(tab.connectionName);
+  };
   try {
     const runId = await api.runQuery(tab.connectionName, sql, channel);
     useApp.getState().updateTab(tab.id, { runId });
@@ -572,8 +611,19 @@ async function closeTabs(ids: string[]) {
 
 async function closeWindow() {
   if (!(await settleFiles(useApp.getState().tabs.filter(needsFileSave)))) return;
+  const label = useApp.getState().label;
   await persistWindow();
-  await api.permitClose(useApp.getState().label);
+  try {
+    await api.removeWindow(label);
+  } catch {
+    /* the session file may still list this window */
+  }
+  try {
+    await api.saveScratch(label, []);
+  } catch {
+    /* scratch is best-effort */
+  }
+  await api.permitClose(label);
 }
 
 async function saveAndAck() {
@@ -710,6 +760,8 @@ async function saveConnection(draft: Draft) {
       colorSet: true,
       rename: draft.name === draft.original ? null : draft.name,
     });
+    if (draft.name !== draft.original) useApp.getState().renameConnection(draft.original, draft.name);
+    else useApp.getState().dropSchema(draft.original);
   } else {
     await api.addConnection({
       name: draft.name,
@@ -727,7 +779,13 @@ async function saveConnection(draft: Draft) {
 }
 
 async function removeConnection(name: string) {
-  await api.removeConnection(name);
+  try {
+    await api.removeConnection(name);
+  } catch (err) {
+    await refreshConnections();
+    throw err;
+  }
+  useApp.getState().dropSchema(name);
   await refreshConnections();
 }
 

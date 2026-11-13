@@ -1,0 +1,19 @@
+[package]
+name = "sqlg-mysql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MySQL connections, schema, and query execution for sqlg"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures = "0.3"
+percent-encoding = "2"
+serde = { version = "1", features = ["derive"] }
+sqlg-core = { path = "../sqlg-core" }
+sqlparser = { version = "0.63", features = ["visitor"] }
+sqlx = { version = "0.8", default-features = false, features = ["mysql", "runtime-tokio", "tls-rustls-ring-native-roots", "chrono"] }
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

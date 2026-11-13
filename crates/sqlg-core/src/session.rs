@@ -147,10 +147,17 @@ mod tests {
         assert_eq!(doc.windows[0].editor_width, Some(640.0));
         assert_eq!(doc.windows[0].editor_height, Some(360.0));
         assert_eq!(doc.windows[0].tabs[0].layout, "below");
-        assert_eq!(doc.windows[0].tabs[0].column_widths.get("name"), Some(&180.0));
-        let again: SessionDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(
+            doc.windows[0].tabs[0].column_widths.get("name"),
+            Some(&180.0)
+        );
+        let again: SessionDocument =
+            serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
         assert_eq!(again.windows[0].editor_height, Some(360.0));
-        assert_eq!(again.windows[0].tabs[0].column_widths.get("name"), Some(&180.0));
+        assert_eq!(
+            again.windows[0].tabs[0].column_widths.get("name"),
+            Some(&180.0)
+        );
     }
 
     #[test]

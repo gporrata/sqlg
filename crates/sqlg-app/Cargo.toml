@@ -1,0 +1,22 @@
+[package]
+name = "sqlg-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sqlg desktop app"
+
+[[bin]]
+name = "sqlg-app"
+path = "src/main.rs"
+
+[dependencies]
+fs4 = "0.12"
+futures = "0.3"
+iced = { version = "0.14", features = ["tokio", "highlighter"] }
+rfd = "0.15"
+serde_json = "1"
+sqlg-core = { path = "../sqlg-core" }
+sqlg-mysql = { path = "../sqlg-mysql" }
+sqlx = { version = "0.8", default-features = false, features = ["mysql", "runtime-tokio", "tls-rustls-ring-native-roots", "chrono"] }
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+uuid = { version = "1", features = ["v4"] }

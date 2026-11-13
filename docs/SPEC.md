@@ -1,8 +1,8 @@
 # sqlg — Requirements Spec
 
 ## Platform
-- Desktop app built with **Tauri** (Rust backend, web frontend).
-- **macOS-first** (native WebKit webview, macOS look & feel).
+- Desktop app built with **iced** (a native Rust UI). Query execution, the connection store, and the `sqlg` command live in separate crates.
+- **macOS-first**.
 - **MySQL-focused** (other engines later, if ever).
 
 ## Windows & tabs
@@ -10,8 +10,8 @@
 - The app **starts with one tab**.
 - **⌘T** – New Tab: opens a tab that **inherits the current tab's connection**.
 - **⌘N** – New Window: opens a new window with **one fresh tab**.
-- Shortcuts are defined as **Tauri menu accelerators** in the **File** menu: `CmdOrCtrl+T` (New Tab), `CmdOrCtrl+N` (New Window).
-  File menu: New Tab ⌘T, New Window ⌘N, —, Open… ⌘O, —, Save ⌘S, Save As… ⇧⌘S, Save Selection As…, —, Close Tab ⌘W, Close Window ⇧⌘W, —, Connections… ⌘, (mockup: `filemenu.png`, `#filemenu` view)
+- Shortcuts are handled by the app: ⌘T new tab, ⌘N new window, ⌘O open, ⌘S save, ⇧⌘S save as, ⌘W close tab, ⇧⌘W close window, ⌘Q quit, ⌘, connections, ⌘↵ run, ⇧⌘↵ statement at the cursor, and ⌘Z / ⇧⌘Z undo and redo in the editor.
+- The File menu is a menu inside the window: New Tab, New Window, Open…, Save, Save As…, Save Selection As…, Close Tab, Close Window, Connections…, Install sqlg Command, Uninstall sqlg Command, and Quit.
 
 ### Tab title (automatic, not user-editable)
 Every tab shows a **connection badge** (a pill with the connection name, colored per connection, e.g. prod in red) followed by a title:
@@ -28,7 +28,7 @@ Every tab shows a **connection badge** (a pill with the connection name, colored
 ## Tab layout
 Three columns per tab:
 1. **Schema tree** – schemas › tables › columns (with column types).
-2. **SQL editor** – line numbers, syntax coloring, Run button (⌘↵; reads "Run Selection" when text is selected).
+2. **SQL editor** – syntax coloring and a Run button (⌘↵; reads "Run Selection" when text is selected). The editor has no line-number gutter.
 3. **Results**.
 
 ### Layout ("chiclet") control
@@ -100,10 +100,10 @@ Segmented control at the top right of the toolbar:
 - Mockup: `main.png` / `dark.png`.
 
 ## Live checking (errors and typos while typing)
-Shown with **CodeMirror 6 `@codemirror/lint`**: wavy underlines (red = error, yellow/orange = warning), **gutter markers** on the affected line numbers, **hover tooltips** with the message, and **quick fixes** as lint actions (e.g. "Replace with email"). Mockup: `lint.png` (`#lint` view).
+Diagnostics are listed under the editor, up to eight at a time, with a button for each quick fix. The editor does not draw wavy underlines or gutter markers. Mockup: `lint.png` (`#lint` view).
 
 Three layers, all producing the same diagnostic format (`{from, to, severity, message, actions}`):
-1. **Syntax:** the `sqlparser` crate with the **MySQL dialect**, compiled to **WASM** and run in the webview (or called as a Tauri command). It runs on every edit, debounced (~250 ms), and maps parser errors to the statement and position.
+1. **Syntax:** the `sqlparser` crate with the **MySQL dialect**, run in the app. It runs on every edit, debounced (~250 ms), and maps parser errors to the statement and position.
 2. **Schema-aware identifiers:** check against the schema already loaded for autocomplete (from `information_schema`):
    - unknown schema, table or column
    - table aliases resolved (`d.emial` → `DRIVER.emial`), including CTE and derived-table names
@@ -123,18 +123,18 @@ Three layers, all producing the same diagnostic format (`{from, to, severity, me
 - Checking runs per statement, so one broken statement doesn't hide diagnostics in the others.
 
 ## Appearance (light / dark theme)
-- **Toggle location:** a small segmented control at the **far left of the footer**, with a sun icon (Light) and a moon icon (Dark).
-- **Scope:** the theme applies to the **whole app**: every tab in every window. Changing it in one window updates all open windows right away (the app broadcasts a `theme-changed` event to all webviews).
-- **Persistence:** the choice is saved and restored on the next launch (e.g. `tauri-plugin-store`, or a `settings.toml` next to `connections.toml`).
-- **Native chrome:** Tauri sets the native window theme to match (`WebviewWindow::set_theme(Some(Theme::Dark | Theme::Light))`), so the title bar, traffic lights, menus and native dialogs follow along.
-- **Implementation:** CSS custom properties (variables) on the root element switched by a `data-theme`/class attribute. The CodeMirror theme and the results grid switch with it. Dark palette: window ≈ #1e1e1e, sidebars ≈ #252526, subtle borders ≈ #3a3a3c, Xcode-like dark SQL colors, zebra-striped dark grid, darker connection badges that stay readable.
-- *Suggestion (not in the mockup):* a third **Auto / System** option that follows the macOS appearance (`prefers-color-scheme` or Tauri's `theme()` plus the `onThemeChanged` event), possibly as the default.
+- **Toggle location:** a Light / Dark button in the toolbar. The label shows the theme that is on.
+- **Scope:** the theme applies to the **whole app**: every tab in every window.
+- **Persistence:** the choice is saved in `session.json` and restored on the next launch.
+- **Native chrome:** the iced window theme follows that choice.
+- **Implementation:** iced's light and dark themes. SQL highlighting uses Inspired GitHub in light mode and Solarized Dark in dark mode.
+- There is no Auto / System theme.
 - Mockups: `main.png` (Light selected), `dark.png` (`#dark` view, Dark selected).
 
 ## Implementation suggestions
-- Editor: **CodeMirror 6** with `@codemirror/lang-sql` using the **MySQL dialect**, plus **schema autocomplete** (the schema is loaded from `information_schema` by a Rust command and passed to `sql({ dialect: MySQL, schema })`).
-- Rust: `sqlx` (MySQL) for queries; optionally `sqlparser` for splitting statements and pre-checking them.
-- Results grid: a virtualized table (e.g. TanStack Table / AG Grid) for large result sets.
+- Editor: iced `text_editor` with SQL highlighting. Double-clicking a schema or table inserts its quoted name. There is no inline autocomplete.
+- Rust: `sqlx` (MySQL) for queries and `sqlparser` for splitting statements and pre-checking them.
+- Results grid: a scrolling grid. The first 100 rows are drawn, and Show more reveals another 100. A query stops after 1000 rows.
 
 ## Mockups (`docs/mockups/`)
 `main.png`, `connections.png`, `editor-results.png`, `error.png`, `menu.png`, `dark.png`, `lint.png`, `selection.png`, `filemenu.png`, rendered from `index.html` (views: default, `#conn`, `#er`, `#err`, `#menu`, `#dark`, `#lint`, `#selection`, `#filemenu`).
@@ -152,8 +152,8 @@ The full reference is in **CLI.md**. In short:
 - `sqlg conn list [--json]`
 - `sqlg query <conn> (-e SQL | -f file | stdin) [--tab (default) | --new-window] [--title name] [--no-run]`. Results open in the GUI. `--tab` uses a new tab in the frontmost window, or a new window if none is open. `--title` inserts `-- <title>` as the first line of the SQL, so the first-comment title rule applies.
 
-**Talking to the GUI:** `tauri-plugin-single-instance` passes the CLI's arguments to the running app (macOS launches the app if it isn't running). A `sqlglient://` deep link (`tauri-plugin-deep-link`) is an alternative. SQL travels in a 0600 temp file, never in the URL.
-**Connection store:** `~/Library/Application Support/<bundle-id>/connections.toml` (non-secret fields, written atomically) plus passwords in the macOS Keychain via the `keyring` crate. The GUI watches the file (`notify` crate) and updates live.
+**Talking to the GUI:** `sqlg query` writes a mode-0600 JSON request and sends that file to the running app on the Unix socket `<data-dir>/gui.sock`. A lock file keeps a single GUI. If nothing is listening, the CLI starts `sqlg-app --cli-request <path>`. The app writes the ack when it has queued the request, not when the query finishes. There is no deep link.
+**Connection store:** `~/Library/Application Support/<bundle-id>/connections.toml` (non-secret fields, written atomically) plus passwords in the macOS Keychain. The GUI reloads the file every few seconds.
 **Exit codes:** 0 ok, 1 general, 2 usage, 3 name conflict, 4 not found, 5 GUI unreachable, 6 keychain, 7 config I/O.
 **Install:** a separate small `sqlg` binary inside the app bundle, symlinked into `/usr/local/bin` via an "Install 'sqlg' Command in PATH" menu item (like VS Code).
 

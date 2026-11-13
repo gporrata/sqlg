@@ -92,14 +92,11 @@ cat cleanup.sql | sqlg query prod --no-run --title 'Trip cleanup'
 ```
 
 ## How it works
-- **Talking to the GUI.** `sqlg query` packages the request as JSON (`{conn, sql, target, title, run}`) and hands it to the app:
-  1. **Primary:** the app uses `tauri-plugin-single-instance`. The CLI runs `open -b <bundle-id> --args --cli-request <path-to-temp-request.json>`. If the app is already running, the plugin passes the arguments to that instance and the second process exits. If it isn't running, macOS launches it and it handles the request on startup. Large SQL travels in a temp file (mode 0600, deleted after reading) to avoid argument-length limits.
-  2. **Alternative/fallback:** a `sqlglient://query?req=<temp-file-id>` deep link via `tauri-plugin-deep-link`. The SQL is never put in the URL itself.
-  The app replies by writing an ack file, or the CLI checks for the app's ready socket. If nothing arrives within 10 s, the CLI exits with code 5.
+- **Talking to the GUI.** `sqlg query` writes the request as JSON (`{conn, sql, target, title, run, ack}`) to a mode-0600 temp file. It sends those bytes to `<data-dir>/gui.sock`. If the socket does not answer, the CLI starts `sqlg-app --cli-request <path>`. A lock file keeps a single GUI, and a second launch forwards the same request. The app writes the ack file when it has queued the request. If the ack does not appear within 10 s, the CLI exits with code 5. There is no deep link.
 - **Shared connection store.**
   - `~/Library/Application Support/<bundle-id>/connections.toml` holds the non-secret fields: name, host, port, user, schema, ssl. It's written atomically (temp file + rename), with an advisory file lock while writing.
   - Passwords live in the **macOS Keychain** via the `keyring` crate, under service `<bundle-id>` and account `conn:<name>`.
-  - The GUI watches the file with the `notify` crate and reloads it, so a CLI `add`/`update`/`remove` shows up live in the connection selector and the Connections dialog.
+  - The GUI reloads the file every few seconds, so a CLI `add`/`update`/`remove` shows up in the connection selector and the Connections dialog.
   ```toml
   [[connection]]
   name = "dev"

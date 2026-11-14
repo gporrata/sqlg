@@ -51,6 +51,8 @@ pub struct GuiWindow {
     pub fullscreen: bool,
     pub file_menu: bool,
     pub expanded: HashSet<String>,
+    pub schema_query: String,
+    pub schema_match: usize,
 }
 
 pub struct Tab {
@@ -317,6 +319,8 @@ impl GuiWindow {
             fullscreen: false,
             file_menu: false,
             expanded: HashSet::new(),
+            schema_query: String::new(),
+            schema_match: 0,
         }
     }
 
@@ -348,6 +352,8 @@ impl GuiWindow {
             fullscreen: snapshot.fullscreen,
             file_menu: false,
             expanded: HashSet::new(),
+            schema_query: String::new(),
+            schema_match: 0,
         }
     }
 

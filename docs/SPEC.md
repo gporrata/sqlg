@@ -10,7 +10,7 @@
 - The app **starts with one tab**.
 - **⌘T** – New Tab: opens a tab that **inherits the current tab's connection**.
 - **⌘N** – New Window: opens a new window with **one fresh tab**.
-- Shortcuts are handled by the app: ⌘T new tab, ⌘N new window, ⌘O open, ⌘S save, ⇧⌘S save as, ⌘W close tab, ⇧⌘W close window, ⌘Q quit, ⌘, connections, ⌘↵ run, ⇧⌘↵ statement at the cursor, and ⌘Z / ⇧⌘Z undo and redo in the editor.
+- Shortcuts are handled by the app: ⌘T new tab, ⌘N new window, ⌘O open, ⌘S save, ⇧⌘S save as, ⌘W close tab, ⇧⌘W close window, ⌘Q quit, ⌘, connections, ⌘↵ run, ⇧⌘↵ statement at the cursor, and ⌘Z / ⇧⌘Z undo and redo in the editor. Alt+F focuses the schema search. While that search has text, Ctrl+N selects the next schema, table, or column.
 - The File menu is a menu inside the window: New Tab, New Window, Open…, Save, Save As…, Save Selection As…, Close Tab, Close Window, Connections…, Install sqlg Command, Uninstall sqlg Command, and Quit.
 
 ### Tab title (automatic, not user-editable)

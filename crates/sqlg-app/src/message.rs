@@ -130,6 +130,13 @@ pub enum Message {
     ReloadSchema {
         window: u64,
     },
+    SchemaQuery {
+        window: u64,
+        query: String,
+    },
+    SchemaNext {
+        window: u64,
+    },
     LintReady {
         window: u64,
         tab: String,

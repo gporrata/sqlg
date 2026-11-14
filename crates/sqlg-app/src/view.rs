@@ -68,9 +68,15 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .schema .actions { padding: 6px; }
 .schema .actions button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 2px 4px; }
 .schema .actions button:hover { background: var(--chip); }
+.schema .find { box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); color: var(--ink); }
 .tree { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .tn { position: relative; display: flex; align-items: center; gap: 4px; width: calc(100% - 8px); box-sizing: border-box; height: 24px; margin: 0 4px; border-radius: 5px; white-space: nowrap; }
 .tn:hover { background: var(--chip); }
+.tn.hit { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.tn.schema .nm, .ic.schema { color: #5b6b82; }
+.tn.table .nm, .ic.table { color: #3478f6; }
+.shell.dark .tn.schema .nm, .shell.dark .ic.schema { color: #a9b7c9; }
+.shell.dark .tn.table .nm, .shell.dark .ic.table { color: #7cb0ff; }
 .tn .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ty { flex: none; margin-left: auto; width: var(--type-ch, auto); white-space: nowrap; text-align: left; color: var(--tone-other); font: 10.5px Menlo, monospace; padding-right: 6px; }
 .tone-num { color: var(--tone-num); }
@@ -388,6 +394,15 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
     } else {
         format!("--type-ch: {type_chars}ch")
     };
+    let hit = view.schema_hit.clone();
+    use_effect(use_reactive(&hit, |hit| {
+        if hit.is_empty() {
+            return;
+        }
+        spawn(async move {
+            scroll_schema_hit().await;
+        });
+    }));
     rsx! {
         aside { class: "schema", style: "width: {width}px",
             div { class: "actions",
@@ -395,6 +410,7 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
                     onclick: move |_| runtime::apply(Message::ReloadSchema { window: window_id }),
                     "Reload"
                 }
+                SchemaSearch { window_id }
             }
             if let Some(message) = view.schema_message.clone() {
                 p { class: "muted", "{message}" }
@@ -404,6 +420,33 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
                     SchemaNode { window_id, tab_id: view.tab_id.clone(), node }
                 }
             }
+        }
+    }
+}
+
+#[component]
+fn SchemaSearch(window_id: u64) -> Element {
+    let initial = use_hook(move || {
+        runtime::lock()
+            .window(window_id)
+            .map(|gui| gui.schema_query.clone())
+            .unwrap_or_default()
+    });
+    rsx! {
+        input {
+            id: "schema-search",
+            class: "find",
+            spellcheck: "false",
+            autocomplete: "off",
+            placeholder: "Find schema, table, or column",
+            aria_label: "Find schema, table, or column",
+            oninput: move |event| {
+                runtime::apply(Message::SchemaQuery {
+                    window: window_id,
+                    query: event.value(),
+                });
+            },
+            "{initial}"
         }
     }
 }
@@ -420,9 +463,14 @@ fn SchemaNode(window_id: u64, tab_id: Option<String>, node: SchemaNodeView) -> E
     let mark = node.mark;
     let tone = node.tone.clone();
     let type_label = node.type_label.clone();
+    let row_class = if node.hit {
+        format!("tn {} hit", node.kind)
+    } else {
+        format!("tn {}", node.kind)
+    };
     rsx! {
         div {
-            class: "tn",
+            class: "{row_class}",
             style: "padding-left: {pad}px",
             onclick: {
                 let key = key.clone();
@@ -499,7 +547,7 @@ fn kind_mark(mark: NodeMark) -> Element {
     match mark {
         NodeMark::Group => rsx! {
             svg {
-                class: "ic",
+                class: "ic schema",
                 width: "14",
                 height: "14",
                 view_box: "0 0 16 16",
@@ -509,7 +557,7 @@ fn kind_mark(mark: NodeMark) -> Element {
         },
         NodeMark::Table => rsx! {
             svg {
-                class: "ic",
+                class: "ic table",
                 width: "14",
                 height: "14",
                 view_box: "0 0 16 16",
@@ -984,6 +1032,7 @@ struct ShellView {
     editor_height: f32,
     schema_message: Option<String>,
     schema: Vec<SchemaNodeView>,
+    schema_hit: String,
     disk_notice: Option<String>,
     diagnostics: Vec<DiagnosticView>,
     results: Vec<SectionView>,
@@ -1015,6 +1064,8 @@ struct SchemaNodeView {
     mark: NodeMark,
     type_label: Option<String>,
     tone: String,
+    kind: &'static str,
+    hit: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1123,9 +1174,19 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
     } else {
         None
     };
+    let schema_hit = schema
+        .as_ref()
+        .and_then(|snapshot| {
+            logic::schema_match_at(
+                &logic::schema_matches(snapshot, &gui.schema_query),
+                gui.schema_match,
+            )
+            .map(|item| item.key.clone())
+        })
+        .unwrap_or_default();
     let schema_nodes = schema
         .as_ref()
-        .map(|snapshot| schema_nodes(snapshot, &gui.expanded))
+        .map(|snapshot| schema_nodes(snapshot, &gui.expanded, &schema_hit))
         .unwrap_or_default();
     let sql = tab.map(crate::model::Tab::sql).unwrap_or_default();
     let diagnostics = tab
@@ -1224,6 +1285,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
         editor_height: gui.editor_height,
         schema_message,
         schema: schema_nodes,
+        schema_hit,
         disk_notice: tab
             .filter(|item| item.disk_notice)
             .map(|item| item.id.clone()),
@@ -1241,13 +1303,14 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
 fn schema_nodes(
     snapshot: &SchemaSnapshot,
     expanded: &std::collections::HashSet<String>,
+    hit_key: &str,
 ) -> Vec<SchemaNodeView> {
     let mut nodes = Vec::new();
     for schema in &snapshot.schemas {
         let schema_key = format!("schema:{}", schema.name);
         let schema_open = expanded.contains(&schema_key);
         nodes.push(SchemaNodeView {
-            key: schema_key,
+            key: schema_key.clone(),
             label: schema.name.clone(),
             ident: Some(logic::quote_ident(&schema.name)),
             depth: 0,
@@ -1256,6 +1319,8 @@ fn schema_nodes(
             mark: NodeMark::Group,
             type_label: None,
             tone: String::new(),
+            kind: "schema",
+            hit: schema_key == hit_key,
         });
         if !schema_open {
             continue;
@@ -1264,7 +1329,7 @@ fn schema_nodes(
             let table_key = format!("table:{}:{}", schema.name, table.name);
             let table_open = expanded.contains(&table_key);
             nodes.push(SchemaNodeView {
-                key: table_key,
+                key: table_key.clone(),
                 label: table.name.clone(),
                 ident: Some(logic::quote_ident(&table.name)),
                 depth: 1,
@@ -1273,6 +1338,8 @@ fn schema_nodes(
                 mark: NodeMark::Table,
                 type_label: None,
                 tone: String::new(),
+                kind: "table",
+                hit: table_key == hit_key,
             });
             if !table_open {
                 continue;
@@ -1283,8 +1350,9 @@ fn schema_nodes(
                 } else {
                     column.column_type.clone()
                 };
+                let column_key = format!("column:{}:{}:{}", schema.name, table.name, column.name);
                 nodes.push(SchemaNodeView {
-                    key: format!("column:{}:{}:{}", schema.name, table.name, column.name),
+                    key: column_key.clone(),
                     label: column.name.clone(),
                     ident: Some(logic::quote_ident(&column.name)),
                     depth: 2,
@@ -1302,6 +1370,8 @@ fn schema_nodes(
                     } else {
                         Some(type_label)
                     },
+                    kind: "column",
+                    hit: column_key == hit_key,
                 });
             }
         }
@@ -1377,6 +1447,29 @@ fn handle_key(window_id: u64, event: Event<KeyboardData>) {
         return;
     }
     let modifiers = event.modifiers();
+    let code = event.code();
+    if modifiers.alt() && !modifiers.meta() && !modifiers.ctrl() && code == Code::KeyF {
+        event.prevent_default();
+        spawn(async move {
+            focus_schema_search().await;
+        });
+        return;
+    }
+    if modifiers.ctrl()
+        && !modifiers.meta()
+        && !modifiers.alt()
+        && !modifiers.shift()
+        && code == Code::KeyN
+    {
+        let searching = runtime::lock()
+            .window(window_id)
+            .is_some_and(|gui| !gui.schema_query.trim().is_empty());
+        if searching {
+            event.prevent_default();
+            runtime::apply(Message::SchemaNext { window: window_id });
+            return;
+        }
+    }
     let command = modifiers.meta() || modifiers.ctrl();
     if !command || runtime::lock().blocks_shortcuts() {
         return;
@@ -1558,6 +1651,27 @@ else { dioxus.send([node.selectionStart || 0, node.selectionEnd || 0]); }"#,
         anchor,
         head,
     });
+}
+
+async fn focus_schema_search() {
+    let mut eval = document::eval(
+        r#"let node = document.getElementById("schema-search");
+if (node) {
+  node.focus();
+  node.select();
+}
+dioxus.send(true);"#,
+    );
+    let _ = eval.recv::<bool>().await;
+}
+
+async fn scroll_schema_hit() {
+    let mut eval = document::eval(
+        r#"let node = document.querySelector(".tn.hit");
+if (node) node.scrollIntoView({ block: "nearest" });
+dioxus.send(true);"#,
+    );
+    let _ = eval.recv::<bool>().await;
 }
 
 async fn sync_highlight_scroll() {

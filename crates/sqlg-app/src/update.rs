@@ -166,6 +166,18 @@ pub fn update(app: &mut App, message: Message) -> Vec<Effect> {
             app.pings.insert(name, ok);
             Vec::new()
         }
+        Message::SchemaQuery { window, query } => {
+            if let Some(gui) = app.window_mut(window) {
+                gui.schema_query = query;
+                gui.schema_match = 0;
+            }
+            reveal_schema_match(app, window, false);
+            Vec::new()
+        }
+        Message::SchemaNext { window } => {
+            reveal_schema_match(app, window, true);
+            Vec::new()
+        }
         Message::ReloadSchema { window } => {
             let name = app
                 .window(window)
@@ -1461,5 +1473,38 @@ fn active_tab_id(app: &App, window: u64) -> Option<String> {
 fn hide_menu(app: &mut App, window: u64) {
     if let Some(gui) = app.window_mut(window) {
         gui.file_menu = false;
+    }
+}
+
+fn reveal_schema_match(app: &mut App, window: u64, advance: bool) {
+    let (query, index, connection) = {
+        let Some(gui) = app.window(window) else {
+            return;
+        };
+        let connection = gui.active_tab().and_then(|tab| tab.connection_name.clone());
+        (gui.schema_query.clone(), gui.schema_match, connection)
+    };
+    let Some(connection) = connection else {
+        return;
+    };
+    let Some(snapshot) = app.schemas.get(&connection).cloned() else {
+        return;
+    };
+    let matches = logic::schema_matches(&snapshot, &query);
+    if matches.is_empty() {
+        return;
+    }
+    let next = if advance {
+        index.saturating_add(1) % matches.len()
+    } else {
+        index % matches.len()
+    };
+    let expand = matches[next].expand.clone();
+    let Some(gui) = app.window_mut(window) else {
+        return;
+    };
+    gui.schema_match = next;
+    for key in expand {
+        gui.expanded.insert(key);
     }
 }

@@ -18,5 +18,6 @@ Choices made where the spec left room, or where the environment differed from th
 - Warnings are: `UPDATE`/`DELETE` without `WHERE`, `SELECT *`, `LIMIT` without `ORDER BY`, and `= NULL`.
 - MySQL integration tests are skipped. Docker is not available in this environment.
 - The schema tree and the result grid are not virtualized. The tree expands in place. A result shows 100 rows at a time, and the query stops after 1000 rows. The editor lists at most eight diagnostics and does not draw a line-number gutter.
+- Schema names and table names use different colors. Alt+F focuses a search field in the schema pane. Each keystroke scrolls the first matching schema, table, or column into view, opening its parents when they are closed. Ctrl+N moves to the next match while the field has text.
 - Closing the last window removes it from the session. Quit saves the session, including unsaved editor text, and does not write those buffers to disk.
 - `sqlg query` treats stdin as an SQL source only when it is not a terminal and it contains bytes. An immediate EOF is not a second source, so `-e` still works when the parent left stdin as an empty pipe. A non-empty pipe together with `-e` or `-f` is a usage error.

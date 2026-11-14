@@ -18,6 +18,53 @@ pub struct Panes {
     pub stack: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaMatch {
+    pub key: String,
+    pub expand: Vec<String>,
+}
+
+pub fn schema_matches(snapshot: &SchemaSnapshot, query: &str) -> Vec<SchemaMatch> {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    for schema in &snapshot.schemas {
+        let schema_key = format!("schema:{}", schema.name);
+        if schema.name.to_ascii_lowercase().contains(&needle) {
+            matches.push(SchemaMatch {
+                key: schema_key.clone(),
+                expand: Vec::new(),
+            });
+        }
+        for table in &schema.tables {
+            let table_key = format!("table:{}:{}", schema.name, table.name);
+            if table.name.to_ascii_lowercase().contains(&needle) {
+                matches.push(SchemaMatch {
+                    key: table_key.clone(),
+                    expand: vec![schema_key.clone()],
+                });
+            }
+            for column in &table.columns {
+                if column.name.to_ascii_lowercase().contains(&needle) {
+                    matches.push(SchemaMatch {
+                        key: format!("column:{}:{}:{}", schema.name, table.name, column.name),
+                        expand: vec![schema_key.clone(), table_key.clone()],
+                    });
+                }
+            }
+        }
+    }
+    matches
+}
+
+pub fn schema_match_at(matches: &[SchemaMatch], index: usize) -> Option<&SchemaMatch> {
+    matches
+        .get(index % matches.len().max(1))
+        .filter(|_| !matches.is_empty())
+}
+
 pub fn layout_panes(layout: &str) -> Panes {
     Panes {
         schema: layout == "all" || layout == "below",
@@ -607,6 +654,46 @@ mod tests {
         );
         assert_eq!(quote_ident("trips"), "trips");
         assert_eq!(quote_ident("a b"), "`a b`");
+    }
+
+    #[test]
+    fn schema_search_walks_names_and_wraps() {
+        use sqlg_mysql::{SchemaColumn, SchemaGroup, SchemaTable};
+        let snapshot = SchemaSnapshot {
+            lower_case_table_names: 0,
+            schemas: vec![SchemaGroup {
+                name: "fleet".into(),
+                tables: vec![SchemaTable {
+                    name: "trip".into(),
+                    columns: vec![SchemaColumn {
+                        name: "driver_id".into(),
+                        data_type: "int".into(),
+                        column_type: "int".into(),
+                        column_key: String::new(),
+                        foreign_key: true,
+                    }],
+                }],
+            }],
+        };
+        let matches = schema_matches(&snapshot, "t");
+        assert_eq!(
+            matches
+                .iter()
+                .map(|item| item.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["schema:fleet", "table:fleet:trip"]
+        );
+        let column = schema_matches(&snapshot, "driver");
+        assert_eq!(column[0].key, "column:fleet:trip:driver_id");
+        assert_eq!(
+            column[0].expand,
+            vec!["schema:fleet".to_string(), "table:fleet:trip".to_string()]
+        );
+        assert!(schema_matches(&snapshot, "  ").is_empty());
+        assert_eq!(
+            schema_match_at(&matches, 3).unwrap().key,
+            "table:fleet:trip"
+        );
     }
 
     #[test]

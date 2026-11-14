@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use sqlg_core::{SqlTone, highlight_sql};
 use sqlg_mysql::SchemaSnapshot;
 
 use crate::logic::{self, ColumnMark, Panes};
@@ -68,10 +69,10 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .schema .actions button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 2px 4px; }
 .schema .actions button:hover { background: var(--chip); }
 .tree { flex: 1; min-height: 0; overflow: auto; position: relative; }
-.tn { position: relative; display: flex; align-items: center; gap: 4px; height: 24px; margin: 0 4px; border-radius: 5px; white-space: nowrap; }
+.tn { position: relative; display: flex; align-items: center; gap: 4px; width: calc(100% - 8px); box-sizing: border-box; height: 24px; margin: 0 4px; border-radius: 5px; white-space: nowrap; }
 .tn:hover { background: var(--chip); }
 .tn .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ty { margin-left: auto; color: var(--tone-other); font: 10.5px Menlo, monospace; padding-right: 6px; }
+.ty { flex: none; margin-left: auto; width: var(--type-ch, auto); white-space: nowrap; text-align: left; color: var(--tone-other); font: 10.5px Menlo, monospace; padding-right: 6px; }
 .tone-num { color: var(--tone-num); }
 .tone-text { color: var(--tone-text); }
 .tone-time { color: var(--tone-time); }
@@ -88,7 +89,17 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .sash { flex: 0 0 6px; background: var(--line); cursor: col-resize; }
 .sash.row { cursor: row-resize; }
 .editor-pane, .results { display: flex; flex-direction: column; background: var(--editor); }
-.editor-pane textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; background: transparent; color: inherit; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; }
+.sql-editor { position: relative; flex: 1; min-height: 0; }
+.sql-highlight, .sql-editor textarea { box-sizing: border-box; margin: 0; padding: 8px; border: 0; width: 100%; height: 100%; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: normal; tab-size: 4; }
+.sql-highlight { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: var(--ink); background: transparent; }
+.sql-highlight::-webkit-scrollbar { display: none; }
+.sql-editor textarea { position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: transparent; caret-color: var(--ink); }
+.sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: transparent; }
+.sql-kw { color: var(--syn-keyword); }
+.sql-str { color: var(--syn-string); }
+.sql-num { color: var(--syn-number); }
+.sql-com { color: var(--syn-comment); }
+.sql-op { color: var(--syn-operator); }
 .diagnostics, .banner { padding: 4px 8px; background: var(--panel); border-top: 1px solid var(--line); }
 .diagnostic { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
 .diagnostic.warn { color: var(--warn); }
@@ -365,6 +376,18 @@ fn FileMenu(window_id: u64, tab_id: Option<String>) -> Element {
 #[component]
 fn SchemaPane(window_id: u64, view: ShellView) -> Element {
     let width = view.schema_width;
+    let type_chars = view
+        .schema
+        .iter()
+        .filter_map(|node| node.type_label.as_deref())
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let tree_style = if type_chars == 0 {
+        String::new()
+    } else {
+        format!("--type-ch: {type_chars}ch")
+    };
     rsx! {
         aside { class: "schema", style: "width: {width}px",
             div { class: "actions",
@@ -376,7 +399,7 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
             if let Some(message) = view.schema_message.clone() {
                 p { class: "muted", "{message}" }
             }
-            div { class: "tree",
+            div { class: "tree", style: "{tree_style}",
                 for node in view.schema.clone() {
                     SchemaNode { window_id, tab_id: view.tab_id.clone(), node }
                 }
@@ -595,33 +618,67 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
             place_caret(anchor, head).await;
         });
     });
+    let sql = editor_text(window_id, &tab_id);
+    let pieces = highlight_sql(&sql);
+    let ends_with_newline = sql.ends_with('\n');
+    use_effect(use_reactive(&sql, |_| {
+        spawn(async move {
+            sync_highlight_scroll().await;
+        });
+    }));
     rsx! {
-        textarea {
-            id: EDITOR_ID,
-            spellcheck: "false",
-            autocomplete: "off",
-            autofocus: true,
-            oninput: {
-                let tab_id = tab_id.clone();
-                move |event| {
-                    runtime::apply(Message::Edit {
-                        window: window_id,
-                        tab: tab_id.clone(),
-                        text: event.value(),
-                    });
+        div { class: "sql-editor",
+            pre { id: "sql-highlight", aria_hidden: "true",
+                for piece in pieces {
+                    span { class: tone_class(piece.tone), "{piece.text}" }
                 }
-            },
-            onselect: {
-                let tab_id = tab_id.clone();
-                move |_| {
+                if ends_with_newline {
+                    br {}
+                }
+            }
+            textarea {
+                id: EDITOR_ID,
+                spellcheck: "false",
+                autocomplete: "off",
+                autofocus: true,
+                oninput: {
                     let tab_id = tab_id.clone();
+                    move |event| {
+                        runtime::apply(Message::Edit {
+                            window: window_id,
+                            tab: tab_id.clone(),
+                            text: event.value(),
+                        });
+                    }
+                },
+                onscroll: move |_| {
                     spawn(async move {
-                        sync_selection(window_id, tab_id).await;
+                        sync_highlight_scroll().await;
                     });
-                }
-            },
-            "{initial}"
+                },
+                onselect: {
+                    let tab_id = tab_id.clone();
+                    move |_| {
+                        let tab_id = tab_id.clone();
+                        spawn(async move {
+                            sync_selection(window_id, tab_id).await;
+                        });
+                    }
+                },
+                "{initial}"
+            }
         }
+    }
+}
+
+fn tone_class(tone: SqlTone) -> &'static str {
+    match tone {
+        SqlTone::Plain => "",
+        SqlTone::Keyword => "sql-kw",
+        SqlTone::String => "sql-str",
+        SqlTone::Number => "sql-num",
+        SqlTone::Comment => "sql-com",
+        SqlTone::Operator => "sql-op",
     }
 }
 
@@ -1501,6 +1558,19 @@ else { dioxus.send([node.selectionStart || 0, node.selectionEnd || 0]); }"#,
         anchor,
         head,
     });
+}
+
+async fn sync_highlight_scroll() {
+    let mut eval = document::eval(
+        r#"let area = document.getElementById("sql-editor");
+let back = document.getElementById("sql-highlight");
+if (area && back) {
+  back.scrollTop = area.scrollTop;
+  back.scrollLeft = area.scrollLeft;
+}
+dioxus.send(true);"#,
+    );
+    let _ = eval.recv::<bool>().await;
 }
 
 async fn place_caret(anchor: u32, head: u32) {

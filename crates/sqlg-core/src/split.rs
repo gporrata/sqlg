@@ -98,6 +98,10 @@ fn span_end(input: &str, start_line: u64, start_col: u64, end_line: u64, end_col
     offset_at(input, end_line, end_col).min(input.len())
 }
 
+pub(crate) fn location_offset(input: &str, line: u64, column: u64) -> usize {
+    offset_at(input, line, column)
+}
+
 fn offset_at(input: &str, line: u64, column: u64) -> usize {
     if line == 0 {
         return 0;

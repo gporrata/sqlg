@@ -126,12 +126,12 @@ Three layers, all producing the same diagnostic format (`{from, to, severity, me
 - **Scope:** the theme applies to the **whole app**: every tab in every window.
 - **Persistence:** the choice is saved in `session.json` and restored on the next launch.
 - **Native chrome:** a dark theme uses the dark window theme, and a light theme uses the light window theme.
-- **Implementation:** CSS custom properties on the webview document. There is no syntax coloring to switch.
+- **Implementation:** CSS custom properties on the webview document. Keywords, strings, numbers, comments, and operators use that theme's syntax colors.
 - There is no Auto / System theme.
 - Mockups: `main.png` (Light selected), `dark.png` (`#dark` view, Dark selected).
 
 ## Implementation suggestions
-- Editor: a textarea. Clicking a schema node expands it. Double-clicking a schema, table, or column inserts its quoted name. There is no inline autocomplete.
+- Editor: a textarea with SQL syntax coloring behind it. Clicking a schema node expands it. Double-clicking a schema, table, or column inserts its quoted name. There is no inline autocomplete.
 - Rust: `sqlx` (MySQL) for queries and `sqlparser` for splitting statements and pre-checking them.
 - Results grid: an HTML table. The first 100 rows are drawn, and Show more reveals another 100. A query stops after 1000 rows. Clicking a cell copies it.
 

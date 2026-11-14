@@ -13,6 +13,11 @@ pub struct AppTheme {
     pub editor: &'static str,
     pub chip: &'static str,
     pub warn: &'static str,
+    pub keyword: &'static str,
+    pub operator: &'static str,
+    pub string: &'static str,
+    pub number: &'static str,
+    pub comment: &'static str,
 }
 
 pub const THEMES: &[AppTheme] = &[
@@ -31,6 +36,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#ffffff",
         chip: "#e8e8ea",
         warn: "#6a4c00",
+        keyword: "#ad3da4",
+        operator: "#ad3da4",
+        string: "#c41a16",
+        number: "#1c00cf",
+        comment: "#6e6e73",
     },
     AppTheme {
         id: "dark",
@@ -47,6 +57,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#1e1e1e",
         chip: "#2b2b2d",
         warn: "#d7ba7d",
+        keyword: "#ff7ab2",
+        operator: "#ff7ab2",
+        string: "#ff8170",
+        number: "#d9c97c",
+        comment: "#8b98a5",
     },
     AppTheme {
         id: "github-light",
@@ -63,6 +78,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#ffffff",
         chip: "#eef5fc",
         warn: "#9a6700",
+        keyword: "#cf222e",
+        operator: "#cf222e",
+        string: "#0a3069",
+        number: "#0550ae",
+        comment: "#59636e",
     },
     AppTheme {
         id: "github-dark",
@@ -79,6 +99,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#0d1117",
         chip: "#161b22",
         warn: "#d29922",
+        keyword: "#ff7b72",
+        operator: "#ff7b72",
+        string: "#a5d6ff",
+        number: "#79c0ff",
+        comment: "#8b949e",
     },
     AppTheme {
         id: "one-dark",
@@ -95,6 +120,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#282c34",
         chip: "#2c313c",
         warn: "#d19a66",
+        keyword: "#c678dd",
+        operator: "#56b6c2",
+        string: "#98c379",
+        number: "#d19a66",
+        comment: "#5c6370",
     },
     AppTheme {
         id: "one-dark-pro",
@@ -111,6 +141,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#282c34",
         chip: "#2c313a",
         warn: "#d19a66",
+        keyword: "#c678dd",
+        operator: "#56b6c2",
+        string: "#98c379",
+        number: "#d19a66",
+        comment: "#5c6370",
     },
     AppTheme {
         id: "one-dark-pro-night-flat",
@@ -127,6 +162,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#16191d",
         chip: "#23272e",
         warn: "#d19a66",
+        keyword: "#c678dd",
+        operator: "#56b6c2",
+        string: "#98c379",
+        number: "#d19a66",
+        comment: "#5c6370",
     },
     AppTheme {
         id: "ayu-dark",
@@ -143,6 +183,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#10141c",
         chip: "#141821",
         warn: "#e6b450",
+        keyword: "#ff8f40",
+        operator: "#f29668",
+        string: "#aad94c",
+        number: "#d2a6ff",
+        comment: "#5a6673",
     },
     AppTheme {
         id: "ayu-mirage",
@@ -159,6 +204,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#242936",
         chip: "#282e3b",
         warn: "#ffcc66",
+        keyword: "#ffa659",
+        operator: "#f29e74",
+        string: "#d5ff80",
+        number: "#dfbfff",
+        comment: "#6e7c8f",
     },
     AppTheme {
         id: "ayu-light",
@@ -175,6 +225,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#fcfcfc",
         chip: "#ebeef0",
         warn: "#f29718",
+        keyword: "#fa8532",
+        operator: "#f2a191",
+        string: "#86b300",
+        number: "#a37acc",
+        comment: "#adaeb1",
     },
     AppTheme {
         id: "dracula",
@@ -191,6 +246,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#282a36",
         chip: "#343746",
         warn: "#ffb86c",
+        keyword: "#ff79c6",
+        operator: "#ff79c6",
+        string: "#f1fa8c",
+        number: "#bd93f9",
+        comment: "#7d8ec4",
     },
     AppTheme {
         id: "nord",
@@ -207,6 +267,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#2e3440",
         chip: "#434c5e",
         warn: "#ebcb8b",
+        keyword: "#81a1c1",
+        operator: "#81a1c1",
+        string: "#a3be8c",
+        number: "#b590af",
+        comment: "#7b88a1",
     },
     AppTheme {
         id: "solarized-light",
@@ -223,6 +288,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#fdf6e3",
         chip: "#eee8d5",
         warn: "#b58900",
+        keyword: "#697800",
+        operator: "#697800",
+        string: "#217e77",
+        number: "#ca347d",
+        comment: "#657b83",
     },
     AppTheme {
         id: "solarized-dark",
@@ -239,6 +309,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#002b36",
         chip: "#073642",
         warn: "#b58900",
+        keyword: "#859900",
+        operator: "#859900",
+        string: "#2aa198",
+        number: "#dd629d",
+        comment: "#839496",
     },
     AppTheme {
         id: "monokai",
@@ -255,6 +330,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#272822",
         chip: "#3e3d32",
         warn: "#e6db74",
+        keyword: "#fa4988",
+        operator: "#fa4988",
+        string: "#e6db74",
+        number: "#ae81ff",
+        comment: "#90886f",
     },
     AppTheme {
         id: "tokyo-night",
@@ -271,6 +351,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#1a1b26",
         chip: "#222433",
         warn: "#e0af68",
+        keyword: "#9d7cd8",
+        operator: "#89ddff",
+        string: "#9ece6a",
+        number: "#ff9e64",
+        comment: "#737aa2",
     },
     AppTheme {
         id: "gruvbox-dark",
@@ -287,6 +372,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#282828",
         chip: "#3c3836",
         warn: "#d79921",
+        keyword: "#fb4934",
+        operator: "#fe8019",
+        string: "#b8bb26",
+        number: "#d3869b",
+        comment: "#a89984",
     },
     AppTheme {
         id: "gruvbox-light",
@@ -303,6 +393,11 @@ pub const THEMES: &[AppTheme] = &[
         editor: "#fbf1c7",
         chip: "#ebdbb2",
         warn: "#b57614",
+        keyword: "#9d0006",
+        operator: "#af3a03",
+        string: "#79740e",
+        number: "#8f3f71",
+        comment: "#7c6f64",
     },
 ];
 
@@ -315,7 +410,7 @@ pub fn find_theme(id: &str) -> &'static AppTheme {
 
 pub fn css_vars(theme: &AppTheme) -> String {
     format!(
-        "--bg:{bg};--panel:{panel};--ink:{ink};--muted:{muted};--line:{line};--accent:{accent};--accent-ink:{accent_ink};--danger:{danger};--editor:{editor};--chip:{chip};--warn:{warn}",
+        "--bg:{bg};--panel:{panel};--ink:{ink};--muted:{muted};--line:{line};--accent:{accent};--accent-ink:{accent_ink};--danger:{danger};--editor:{editor};--chip:{chip};--warn:{warn};--syn-keyword:{keyword};--syn-operator:{operator};--syn-string:{string};--syn-number:{number};--syn-comment:{comment}",
         bg = theme.bg,
         panel = theme.panel,
         ink = theme.ink,
@@ -327,6 +422,11 @@ pub fn css_vars(theme: &AppTheme) -> String {
         editor = theme.editor,
         chip = theme.chip,
         warn = theme.warn,
+        keyword = theme.keyword,
+        operator = theme.operator,
+        string = theme.string,
+        number = theme.number,
+        comment = theme.comment,
     )
 }
 
@@ -348,6 +448,8 @@ mod tests {
         assert_eq!(gruvbox.editor, "#282828");
         assert_eq!(gruvbox.ink, "#ebdbb2");
         assert_eq!(gruvbox.accent, "#fe8019");
+        assert_eq!(gruvbox.keyword, "#fb4934");
+        assert_eq!(gruvbox.string, "#b8bb26");
         let ayu = find_theme("ayu-dark");
         assert!(ayu.dark);
         assert_eq!(ayu.editor, "#10141c");

@@ -2,6 +2,7 @@
 //! Passwords never live in this crate's on-disk config. Callers put them in
 //! the macOS Keychain (or a test double).
 
+mod highlight;
 #[cfg(target_os = "macos")]
 mod keychain_macos;
 #[cfg(not(target_os = "macos"))]
@@ -16,6 +17,7 @@ mod store;
 
 pub const BUNDLE_ID: &str = "dev.sqlg.app";
 
+pub use highlight::{SqlPiece, SqlTone, highlight_sql};
 pub use lint::{Diagnostic, LintAction, LintCatalog, LintSchema, LintTable, lint_sql};
 pub use paths::data_dir;
 pub use request::{CliRequest, insert_title};

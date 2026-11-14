@@ -13,7 +13,7 @@ Choices made where the spec left room, or where the environment differed from th
 - Execution stops at the first failed statement. The footer stays a neutral count.
 - New files are UTF-8 with LF. An existing UTF-8 BOM and CRLF line endings are preserved. Other encodings are rejected.
 - The window title is `sqlg — {tab label}`. The tab tooltip includes the full title and the linked path. There is no proxy icon.
-- The footer theme selector lists the common editor themes, including Gruvbox, Ayu, and One Dark Pro. Their colors are the Visual Studio Code workbench colors for those themes. A dark theme sets the native window theme to dark. There is no Auto mode.
+- The footer theme selector lists the common editor themes, including Gruvbox, Ayu, and One Dark Pro. Their workbench and SQL syntax colors are the Visual Studio Code colors for those themes. A dark theme sets the native window theme to dark. There is no Auto mode.
 - Connections may set `explain_lint` (default false, including names that look like prod) and an optional badge `color`.
 - Warnings are: `UPDATE`/`DELETE` without `WHERE`, `SELECT *`, `LIMIT` without `ORDER BY`, and `= NULL`.
 - MySQL integration tests are skipped. Docker is not available in this environment.

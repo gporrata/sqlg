@@ -22,6 +22,6 @@ pub use lint::{Diagnostic, LintAction, LintCatalog, LintSchema, LintTable, lint_
 pub use paths::data_dir;
 pub use request::{CliRequest, insert_title};
 pub use secrets::{SecretStore, Secrets};
-pub use session::{SessionDocument, TabSnapshot, WindowSnapshot};
+pub use session::{EditorSnapshot, SessionDocument, TabSnapshot, WindowSnapshot};
 pub use split::{SqlStatement, snippet, split_statements, statement_at};
 pub use store::{Connection, ConnectionPatch, Store, StoreError, atomic_write};

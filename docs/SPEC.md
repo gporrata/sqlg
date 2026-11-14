@@ -11,7 +11,7 @@
 - **⌘T** – New Tab: opens a tab that **inherits the current tab's connection**.
 - **⌘N** – New Window: opens a new window with **one fresh tab**.
 - Shortcuts are handled by the app: ⌘T new tab, ⌘N new window, ⌘O open, ⌘S save, ⇧⌘S save as, ⌘W close tab, ⇧⌘W close window, ⌘Q quit, ⌘, connections, ⌘↵ run, ⇧⌘↵ statement at the cursor, and ⌘Z / ⇧⌘Z undo and redo in the editor. Alt+F focuses the schema search. While that search has text, Ctrl+N selects the next schema, table, or column.
-- The File menu is a menu inside the window: New Tab, New Window, Open…, Save, Save As…, Save Selection As…, Close Tab, Close Window, Connections…, Install sqlg Command, Uninstall sqlg Command, and Quit.
+- The File menu is the system menu. On macOS it is in the application menu bar, with Quit, Connections, and the sqlg command under the application menu. On Ubuntu it is the window menu bar. The items are New Tab, New Window, Open…, Save, Save As…, Save Selection As…, Close Tab, Close Window, Connections…, Install sqlg Command, Uninstall sqlg Command, and Quit. Edit holds Cut, Copy, Paste, and Select All.
 
 ### Tab title (automatic, not user-editable)
 Every tab shows a **connection badge** (a pill with the connection name, colored per connection, e.g. prod in red) followed by a title:
@@ -37,6 +37,7 @@ Segmented control at the top right of the toolbar:
 
 ## Connections
 - **Per-tab connection selector** in the toolbar (e.g. dev / preview / prod), with a status dot.
+- Each connection on a tab keeps its own editor, linked file, and results. Switching connections puts the current screen away and brings that connection's screen back, including unsaved text. The session stores those other editors. Result sets are still not restored.
 - An **edit (gear) button** next to it opens the **Connections modal**:
   - List of **named connections** (names are user-editable, e.g. dev, preview, test, prod) with + / − buttons.
   - Form: Name, Host, Port (default 3306), User, Password (masked), Default schema, SSL toggle.
@@ -44,6 +45,7 @@ Segmented control at the top right of the toolbar:
 
 ## Running queries
 - The editor can hold **multiple statements**; running produces **stacked result sections, one per statement**.
+- A result can be pinned. While the current result is pinned, the next run opens another result. Result tabs switch between them. Unpinning a result removes it. An unpinned result is replaced by the next run.
 - Each section header: statement number, short SQL snippet, row count and elapsed time.
 - SELECT → results grid. **DML (UPDATE/INSERT/DELETE) → "N rows affected"** (no grid).
 - The results column scrolls when the sections overflow.
@@ -139,7 +141,7 @@ Three layers, all producing the same diagnostic format (`{from, to, severity, me
 `main.png`, `connections.png`, `editor-results.png`, `error.png`, `menu.png`, `dark.png`, `lint.png`, `selection.png`, `filemenu.png`, rendered from `index.html` (views: default, `#conn`, `#er`, `#err`, `#menu`, `#dark`, `#lint`, `#selection`, `#filemenu`).
 
 ## Editor toolbar buttons
-The toolbar holds File, the tab strip, the connection selector, Run, and the layout chiclets. New Tab and New Window are in the File menu and on ⌘T and ⌘N.
+The toolbar holds the tab strip, the connection selector, Run, and the layout chiclets. New Tab and New Window are in the File menu and on ⌘T and ⌘N.
 
 ## Command-line tool (`sqlg`)
 The full reference is in **CLI.md**. In short:

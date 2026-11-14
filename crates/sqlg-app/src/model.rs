@@ -4,7 +4,10 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::SystemTime;
 
-use sqlg_core::{Connection, SessionDocument, TabSnapshot, WindowSnapshot, statement_at};
+use sqlg_core::{
+    Connection, Diagnostic, EditorSnapshot, SessionDocument, TabSnapshot, WindowSnapshot,
+    statement_at,
+};
 use sqlg_mysql::{ColumnInfo, QueryEvent, SchemaSnapshot};
 
 use crate::db::Db;
@@ -66,17 +69,50 @@ pub struct Tab {
     pub newline: String,
     pub bom: bool,
     pub seen_modified: Option<SystemTime>,
-    pub results: Vec<ResultSection>,
-    pub show_rows: usize,
+    pub editors: BTreeMap<String, StoredEditor>,
+    pub decks: Vec<ResultDeck>,
+    pub active_deck: usize,
+    pub run_deck: u64,
+    pub next_deck: u64,
     pub running: bool,
     pub run_id: String,
-    pub footer: String,
     pub restored: bool,
     pub disk_notice: bool,
-    pub diagnostics: Vec<sqlg_core::Diagnostic>,
+    pub diagnostics: Vec<Diagnostic>,
     pub lint_generation: u64,
     pub undo: Vec<String>,
     pub redo: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StoredEditor {
+    pub buffer: Buffer,
+    pub file_path: Option<String>,
+    pub saved_sql: Option<String>,
+    pub newline: String,
+    pub bom: bool,
+    pub seen_modified: Option<SystemTime>,
+    pub decks: Vec<ResultDeck>,
+    pub active_deck: usize,
+    pub run_deck: u64,
+    pub next_deck: u64,
+    pub running: bool,
+    pub run_id: String,
+    pub restored: bool,
+    pub disk_notice: bool,
+    pub diagnostics: Vec<Diagnostic>,
+    pub undo: Vec<String>,
+    pub redo: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResultDeck {
+    pub id: u64,
+    pub pinned: bool,
+    pub label: String,
+    pub results: Vec<ResultSection>,
+    pub show_rows: usize,
+    pub footer: String,
 }
 
 #[derive(Clone, Debug)]
@@ -87,6 +123,7 @@ pub struct Buffer {
     pub revision: u64,
 }
 
+#[derive(Clone, Debug)]
 pub struct ResultSection {
     pub sql: String,
     pub columns: Vec<ColumnInfo>,
@@ -401,11 +438,13 @@ impl Tab {
             newline: "\n".into(),
             bom: false,
             seen_modified: None,
-            results: Vec::new(),
-            show_rows: logic::VISIBLE_ROWS,
+            editors: BTreeMap::new(),
+            decks: Vec::new(),
+            active_deck: 0,
+            run_deck: 0,
+            next_deck: 0,
             running: false,
             run_id: String::new(),
-            footer: String::new(),
             restored: false,
             disk_notice: false,
             diagnostics: Vec::new(),
@@ -438,6 +477,13 @@ impl Tab {
         } else {
             buffer.head
         };
+        let mut editors = BTreeMap::new();
+        for editor in snapshot.editors {
+            editors.insert(
+                editor.connection_name.clone(),
+                StoredEditor::from_snapshot(editor),
+            );
+        }
         Self {
             id: snapshot.id,
             connection_name: snapshot.connection_name,
@@ -453,11 +499,13 @@ impl Tab {
             },
             bom: false,
             seen_modified: None,
-            results: Vec::new(),
-            show_rows: logic::VISIBLE_ROWS,
+            editors,
+            decks: Vec::new(),
+            active_deck: 0,
+            run_deck: 0,
+            next_deck: 0,
             running: false,
             run_id: String::new(),
-            footer: String::new(),
             restored: !snapshot.sql.is_empty(),
             disk_notice: false,
             diagnostics: Vec::new(),
@@ -488,7 +536,168 @@ impl Tab {
             &self.sql(),
             self.file_path.as_deref(),
             self.saved_sql.as_deref(),
-        )
+        ) || self.editors.values().any(StoredEditor::needs_file_save)
+    }
+
+    pub fn switch_connection(&mut self, name: Option<String>) {
+        let next = name.clone().unwrap_or_default();
+        let current = self.connection_name.clone().unwrap_or_default();
+        if next == current {
+            return;
+        }
+        let stored = self.capture_editor();
+        self.editors.insert(current, stored);
+        self.connection_name = name;
+        if let Some(stored) = self.editors.remove(&next) {
+            self.restore_editor(stored);
+        } else {
+            self.clear_editor();
+        }
+    }
+
+    pub fn current_deck(&self) -> Option<&ResultDeck> {
+        if self.decks.is_empty() {
+            return None;
+        }
+        self.decks.get(self.active_deck.min(self.decks.len() - 1))
+    }
+
+    pub fn prepare_run(&mut self) {
+        let index = if self.decks.is_empty() {
+            self.push_deck()
+        } else {
+            let active = self.active_deck.min(self.decks.len() - 1);
+            if self.decks[active].pinned {
+                self.push_deck()
+            } else {
+                active
+            }
+        };
+        self.active_deck = index;
+        let deck = &mut self.decks[index];
+        deck.results.clear();
+        deck.show_rows = logic::VISIBLE_ROWS;
+        deck.footer = "Running…".into();
+        self.run_deck = deck.id;
+        self.running = true;
+        self.restored = false;
+    }
+
+    pub fn set_idle_footer(&mut self, text: &str) -> bool {
+        if self.decks.is_empty() {
+            return false;
+        }
+        let index = self.active_deck.min(self.decks.len() - 1);
+        if self.decks[index].pinned {
+            return false;
+        }
+        self.decks[index].footer = text.to_string();
+        true
+    }
+
+    pub fn select_deck(&mut self, index: usize) {
+        if index < self.decks.len() {
+            self.active_deck = index;
+        }
+    }
+
+    pub fn pin_deck(&mut self, index: usize) {
+        if let Some(deck) = self.decks.get_mut(index) {
+            deck.pinned = true;
+        }
+    }
+
+    pub fn unpin_deck(&mut self, index: usize) {
+        if index >= self.decks.len() {
+            return;
+        }
+        self.decks.remove(index);
+        if self.decks.is_empty() {
+            self.active_deck = 0;
+            return;
+        }
+        if self.active_deck > index {
+            self.active_deck -= 1;
+        } else if self.active_deck >= self.decks.len() {
+            self.active_deck = self.decks.len() - 1;
+        }
+    }
+
+    fn push_deck(&mut self) -> usize {
+        self.next_deck = self.next_deck.saturating_add(1);
+        let id = self.next_deck;
+        self.decks.push(ResultDeck {
+            id,
+            pinned: false,
+            label: format!("Result {id}"),
+            results: Vec::new(),
+            show_rows: logic::VISIBLE_ROWS,
+            footer: String::new(),
+        });
+        self.decks.len() - 1
+    }
+
+    fn capture_editor(&self) -> StoredEditor {
+        StoredEditor {
+            buffer: self.buffer.clone(),
+            file_path: self.file_path.clone(),
+            saved_sql: self.saved_sql.clone(),
+            newline: self.newline.clone(),
+            bom: self.bom,
+            seen_modified: self.seen_modified,
+            decks: self.decks.clone(),
+            active_deck: self.active_deck,
+            run_deck: self.run_deck,
+            next_deck: self.next_deck,
+            running: self.running,
+            run_id: self.run_id.clone(),
+            restored: self.restored,
+            disk_notice: self.disk_notice,
+            diagnostics: self.diagnostics.clone(),
+            undo: self.undo.clone(),
+            redo: self.redo.clone(),
+        }
+    }
+
+    fn restore_editor(&mut self, stored: StoredEditor) {
+        self.buffer = stored.buffer;
+        self.file_path = stored.file_path;
+        self.saved_sql = stored.saved_sql;
+        self.newline = stored.newline;
+        self.bom = stored.bom;
+        self.seen_modified = stored.seen_modified;
+        self.decks = stored.decks;
+        self.active_deck = stored.active_deck;
+        self.run_deck = stored.run_deck;
+        self.next_deck = stored.next_deck;
+        self.running = stored.running;
+        self.run_id = stored.run_id;
+        self.restored = stored.restored;
+        self.disk_notice = stored.disk_notice;
+        self.diagnostics = stored.diagnostics;
+        self.undo = stored.undo;
+        self.redo = stored.redo;
+    }
+
+    fn clear_editor(&mut self) {
+        let revision = self.buffer.revision.wrapping_add(1);
+        self.buffer = Buffer::new("");
+        self.buffer.revision = revision;
+        self.file_path = None;
+        self.saved_sql = None;
+        self.newline = "\n".into();
+        self.bom = false;
+        self.seen_modified = None;
+        self.decks.clear();
+        self.active_deck = 0;
+        self.run_deck = 0;
+        self.running = false;
+        self.run_id.clear();
+        self.restored = false;
+        self.disk_notice = false;
+        self.diagnostics.clear();
+        self.undo.clear();
+        self.redo.clear();
     }
 
     pub fn cursor_offset(&self) -> usize {
@@ -533,56 +742,13 @@ impl Tab {
     }
 
     pub fn apply_query_event(&mut self, event: QueryEvent) {
-        match event {
-            QueryEvent::Begin { index, sql, .. } => {
-                let section = self.section_mut(index);
-                section.sql = sql;
-            }
-            QueryEvent::Columns { index, columns } => {
-                self.section_mut(index).columns = columns;
-            }
-            QueryEvent::Rows { index, rows } => {
-                self.section_mut(index).rows.extend(rows);
-            }
-            QueryEvent::StatementDone {
-                index,
-                rows_affected,
-                elapsed_ms,
-                truncated,
-                ..
-            } => {
-                let section = self.section_mut(index);
-                section.rows_affected = rows_affected;
-                section.elapsed_ms = Some(elapsed_ms);
-                section.truncated = truncated;
-            }
-            QueryEvent::StatementError { index, message } => {
-                self.section_mut(index).error = Some(message);
-            }
-            QueryEvent::Finished {
-                executed,
-                total,
-                failed,
-                elapsed_ms,
-                cancelled,
-                ..
-            } => {
-                let summary = logic::execution_summary(total, executed, failed);
-                let elapsed = logic::format_elapsed(Some(elapsed_ms));
-                let text = if elapsed.is_empty() {
-                    summary
-                } else {
-                    format!("{summary} · {elapsed}")
-                };
-                self.footer = if cancelled {
-                    format!("Cancelled · {text}")
-                } else {
-                    text
-                };
-                self.running = false;
-                self.restored = false;
-            }
-        }
+        apply_deck_event(
+            &mut self.decks,
+            self.run_deck,
+            &mut self.running,
+            &mut self.restored,
+            event,
+        );
     }
 
     pub fn snapshot(&self) -> TabSnapshot {
@@ -607,15 +773,175 @@ impl Tab {
             saved_sql: self.saved_sql.clone(),
             dirty: self.is_dirty(),
             newline: self.newline.clone(),
+            editors: self
+                .editors
+                .iter()
+                .filter(|(_, editor)| editor.keeps_text())
+                .map(|(name, editor)| editor.snapshot(name))
+                .collect(),
+        }
+    }
+}
+
+impl StoredEditor {
+    fn from_snapshot(snapshot: EditorSnapshot) -> Self {
+        let mut buffer = Buffer::new(&snapshot.sql);
+        let head = snapshot.selection_head.unwrap_or(snapshot.cursor) as usize;
+        let anchor = snapshot.selection_anchor.unwrap_or(head as u32) as usize;
+        buffer.head = floor_boundary(&buffer.text, head);
+        buffer.anchor = if snapshot.selection_anchor.is_some()
+            && snapshot.selection_anchor != snapshot.selection_head
+        {
+            floor_boundary(&buffer.text, anchor)
+        } else {
+            buffer.head
+        };
+        Self {
+            buffer,
+            file_path: snapshot.file_path,
+            saved_sql: snapshot.saved_sql,
+            newline: if snapshot.newline.is_empty() {
+                "\n".into()
+            } else {
+                snapshot.newline
+            },
+            bom: false,
+            seen_modified: None,
+            decks: Vec::new(),
+            active_deck: 0,
+            run_deck: 0,
+            next_deck: 0,
+            running: false,
+            run_id: String::new(),
+            restored: !snapshot.sql.is_empty(),
+            disk_notice: false,
+            diagnostics: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 
-    fn section_mut(&mut self, index: usize) -> &mut ResultSection {
-        while self.results.len() <= index {
-            self.results.push(ResultSection::empty());
-        }
-        &mut self.results[index]
+    pub fn apply_query_event(&mut self, event: QueryEvent) {
+        apply_deck_event(
+            &mut self.decks,
+            self.run_deck,
+            &mut self.running,
+            &mut self.restored,
+            event,
+        );
     }
+
+    fn needs_file_save(&self) -> bool {
+        needs_file_save(
+            &self.buffer.text,
+            self.file_path.as_deref(),
+            self.saved_sql.as_deref(),
+        )
+    }
+
+    fn keeps_text(&self) -> bool {
+        !self.buffer.text.is_empty() || self.file_path.is_some() || self.saved_sql.is_some()
+    }
+
+    fn snapshot(&self, connection_name: &str) -> EditorSnapshot {
+        let head = self.buffer.head.min(self.buffer.text.len());
+        let anchor = if self.buffer.anchor == self.buffer.head {
+            None
+        } else {
+            Some(self.buffer.anchor as u32)
+        };
+        EditorSnapshot {
+            connection_name: connection_name.to_string(),
+            sql: self.buffer.text.clone(),
+            cursor: head as u32,
+            selection_anchor: anchor,
+            selection_head: anchor.map(|_| head as u32),
+            file_path: self.file_path.clone(),
+            saved_sql: self.saved_sql.clone(),
+            newline: self.newline.clone(),
+        }
+    }
+}
+
+fn apply_deck_event(
+    decks: &mut [ResultDeck],
+    run_deck: u64,
+    running: &mut bool,
+    restored: &mut bool,
+    event: QueryEvent,
+) {
+    match event {
+        QueryEvent::Finished {
+            executed,
+            total,
+            failed,
+            elapsed_ms,
+            cancelled,
+            ..
+        } => {
+            let summary = logic::execution_summary(total, executed, failed);
+            let elapsed = logic::format_elapsed(Some(elapsed_ms));
+            let text = if elapsed.is_empty() {
+                summary
+            } else {
+                format!("{summary} · {elapsed}")
+            };
+            if let Some(deck) = decks.iter_mut().find(|deck| deck.id == run_deck) {
+                deck.footer = if cancelled {
+                    format!("Cancelled · {text}")
+                } else {
+                    text
+                };
+            }
+            *running = false;
+            *restored = false;
+        }
+        QueryEvent::Begin { index, sql, .. } => {
+            if let Some(section) = section_mut(decks, run_deck, index) {
+                section.sql = sql;
+            }
+        }
+        QueryEvent::Columns { index, columns } => {
+            if let Some(section) = section_mut(decks, run_deck, index) {
+                section.columns = columns;
+            }
+        }
+        QueryEvent::Rows { index, rows } => {
+            if let Some(section) = section_mut(decks, run_deck, index) {
+                section.rows.extend(rows);
+            }
+        }
+        QueryEvent::StatementDone {
+            index,
+            rows_affected,
+            elapsed_ms,
+            truncated,
+            ..
+        } => {
+            if let Some(section) = section_mut(decks, run_deck, index) {
+                section.rows_affected = rows_affected;
+                section.elapsed_ms = Some(elapsed_ms);
+                section.truncated = truncated;
+            }
+        }
+        QueryEvent::StatementError { index, message } => {
+            if let Some(section) = section_mut(decks, run_deck, index) {
+                section.error = Some(message);
+            }
+        }
+    }
+}
+
+fn section_mut(
+    decks: &mut [ResultDeck],
+    run_deck: u64,
+    index: usize,
+) -> Option<&mut ResultSection> {
+    let deck = decks.iter_mut().find(|deck| deck.id == run_deck)?;
+    while deck.results.len() <= index {
+        deck.results.push(ResultSection::empty());
+    }
+    Some(&mut deck.results[index])
 }
 
 impl Buffer {
@@ -716,6 +1042,55 @@ pub fn ordered(anchor: usize, head: usize) -> (usize, usize) {
         (anchor, head)
     } else {
         (head, anchor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switching_connections_keeps_each_editor() {
+        let mut tab = Tab::fresh();
+        tab.buffer.set_typed("select a".into());
+        tab.switch_connection(Some("dev".into()));
+        assert_eq!(tab.sql(), "");
+        tab.buffer.set_typed("select b".into());
+        tab.switch_connection(Some("prod".into()));
+        tab.buffer.set_typed("select c".into());
+        tab.switch_connection(Some("dev".into()));
+        assert_eq!(tab.sql(), "select b");
+        tab.switch_connection(None);
+        assert_eq!(tab.sql(), "select a");
+        let snapshot = tab.snapshot();
+        assert_eq!(snapshot.sql, "select a");
+        assert_eq!(snapshot.editors.len(), 2);
+        tab.switch_connection(Some("dev".into()));
+        assert_eq!(tab.sql(), "select b");
+    }
+
+    #[test]
+    fn pinned_result_opens_another_and_unpin_removes_it() {
+        let mut tab = Tab::fresh();
+        tab.prepare_run();
+        assert_eq!(tab.decks.len(), 1);
+        assert_eq!(tab.decks[0].label, "Result 1");
+        tab.pin_deck(0);
+        tab.prepare_run();
+        assert_eq!(tab.decks.len(), 2);
+        assert!(tab.decks[0].pinned);
+        assert!(!tab.decks[1].pinned);
+        assert_eq!(tab.active_deck, 1);
+        tab.prepare_run();
+        assert_eq!(tab.decks.len(), 2);
+        tab.pin_deck(1);
+        tab.prepare_run();
+        assert_eq!(tab.decks.len(), 3);
+        assert_eq!(tab.active_deck, 2);
+        tab.select_deck(0);
+        tab.unpin_deck(0);
+        assert_eq!(tab.decks.len(), 2);
+        assert!(tab.decks.iter().all(|deck| deck.id != 1));
     }
 }
 

@@ -1,7 +1,9 @@
+mod color;
 mod db;
 mod files;
 mod ipc;
 mod logic;
+mod menu;
 mod message;
 mod model;
 mod runtime;

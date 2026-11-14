@@ -161,6 +161,21 @@ pub enum Message {
         window: u64,
         tab: String,
     },
+    SelectDeck {
+        window: u64,
+        tab: String,
+        index: usize,
+    },
+    PinDeck {
+        window: u64,
+        tab: String,
+        index: usize,
+    },
+    UnpinDeck {
+        window: u64,
+        tab: String,
+        index: usize,
+    },
     OpenConnections(u64),
     FormNew,
     FormPick(String),

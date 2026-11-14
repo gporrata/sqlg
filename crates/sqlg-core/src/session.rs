@@ -86,6 +86,29 @@ pub struct TabSnapshot {
     pub dirty: bool,
     #[serde(default)]
     pub newline: String,
+    #[serde(default)]
+    pub editors: Vec<EditorSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorSnapshot {
+    #[serde(default)]
+    pub connection_name: String,
+    #[serde(default)]
+    pub sql: String,
+    #[serde(default)]
+    pub cursor: u32,
+    #[serde(default)]
+    pub selection_anchor: Option<u32>,
+    #[serde(default)]
+    pub selection_head: Option<u32>,
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub saved_sql: Option<String>,
+    #[serde(default)]
+    pub newline: String,
 }
 
 fn default_layout() -> String {
@@ -114,6 +137,7 @@ mod tests {
         assert_eq!(doc.theme, "light");
         assert_eq!(doc.windows[0].tabs[0].sql, "select 1");
         assert!(doc.windows[0].tabs[0].dirty);
+        assert!(doc.windows[0].tabs[0].editors.is_empty());
         assert!(doc.windows[0].schema_width.is_none());
         assert!(doc.windows[0].tabs[0].column_widths.is_empty());
         let encoded = serde_json::to_string(&doc).unwrap();
@@ -147,10 +171,51 @@ mod tests {
         assert_eq!(doc.windows[0].editor_width, Some(640.0));
         assert_eq!(doc.windows[0].editor_height, Some(360.0));
         assert_eq!(doc.windows[0].tabs[0].layout, "below");
-        assert_eq!(doc.windows[0].tabs[0].column_widths.get("name"), Some(&180.0));
-        let again: SessionDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(
+            doc.windows[0].tabs[0].column_widths.get("name"),
+            Some(&180.0)
+        );
+        let again: SessionDocument =
+            serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
         assert_eq!(again.windows[0].editor_height, Some(360.0));
-        assert_eq!(again.windows[0].tabs[0].column_widths.get("name"), Some(&180.0));
+        assert_eq!(
+            again.windows[0].tabs[0].column_widths.get("name"),
+            Some(&180.0)
+        );
+    }
+
+    #[test]
+    fn stored_editors_round_trip() {
+        let raw = r#"{
+            "windows": [{
+                "label": "main",
+                "x": 1, "y": 2, "width": 3, "height": 4,
+                "tabs": [{
+                    "id": "t1",
+                    "connectionName": "dev",
+                    "sql": "select 1",
+                    "editors": [{
+                        "connectionName": "prod",
+                        "sql": "select 2",
+                        "cursor": 4
+                    }]
+                }]
+            }]
+        }"#;
+        let doc: SessionDocument = serde_json::from_str(raw).unwrap();
+        let editor = &doc.windows[0].tabs[0].editors[0];
+        assert_eq!(editor.connection_name, "prod");
+        assert_eq!(editor.sql, "select 2");
+        assert_eq!(editor.cursor, 4);
+        let again: SessionDocument =
+            serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(again.windows[0].tabs[0].editors[0].sql, "select 2");
+        assert!(
+            !serde_json::to_string(&doc)
+                .unwrap()
+                .to_lowercase()
+                .contains("password")
+        );
     }
 
     #[test]

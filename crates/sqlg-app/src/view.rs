@@ -66,7 +66,7 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .schema, .editor-pane, .results { min-width: 0; min-height: 0; }
 .schema { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
 .schema .actions { padding: 6px; }
-.schema .actions button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 2px 4px; }
+.schema .actions button { display: block; width: 100%; text-align: left; }
 .schema .actions button:hover { background: var(--chip); }
 .schema .find { box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); color: var(--ink); }
 .tree { flex: 1; min-height: 0; overflow: auto; position: relative; }
@@ -110,7 +110,12 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .diagnostic { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
 .diagnostic.warn { color: var(--warn); }
 .diagnostic.error, .error { color: var(--danger); }
-.results { overflow: auto; flex: 1; }
+.results { overflow: hidden; flex: 1; }
+.result-scroll { overflow: auto; flex: 1; min-height: 0; }
+.decks { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--panel); overflow: auto; flex: none; }
+.deck { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 4px; padding: 2px; }
+.deck.active { background: var(--chip); border-color: var(--line); }
+.deck button { padding: 1px 6px; }
 .section { margin: 8px; }
 .grid { border-collapse: collapse; font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; position: relative; }
@@ -155,6 +160,9 @@ pub fn child_root() -> Element {
 fn Shell(window_id: u64) -> Element {
     let mut seen = use_signal(|| runtime::epoch());
     use_hook(move || runtime::attach_window(window_id));
+    let _menu = dioxus::desktop::use_muda_event_handler(move |event| {
+        dispatch_menu(window_id, &event.id().0);
+    });
     use_future(move || async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(32)).await;
@@ -224,18 +232,6 @@ fn Toolbar(window_id: u64, view: ShellView) -> Element {
     let tab_id = view.tab_id.clone();
     rsx! {
         div { class: "toolbar",
-            div { class: "menu-wrap",
-                button {
-                    onclick: move |event| {
-                        event.stop_propagation();
-                        runtime::apply(Message::ToggleFileMenu(window_id));
-                    },
-                    "File"
-                }
-                if view.file_menu {
-                    FileMenu { window_id, tab_id: tab_id.clone() }
-                }
-            }
             div { class: "tabs",
                 for tab in view.tabs.clone() {
                     TabChip { window_id, tab }
@@ -335,46 +331,6 @@ fn TabChip(window_id: u64, tab: TabChipView) -> Element {
                 },
                 "×"
             }
-        }
-    }
-}
-
-#[component]
-fn FileMenu(window_id: u64, tab_id: Option<String>) -> Element {
-    rsx! {
-        div {
-            class: "menu",
-            onclick: move |event| event.stop_propagation(),
-            button { onclick: move |_| runtime::apply(Message::NewTab(window_id)), "New Tab" }
-            button { onclick: move |_| runtime::apply(Message::NewWindow), "New Window" }
-            button { onclick: move |_| runtime::apply(Message::Open(window_id)), "Open…" }
-            button {
-                onclick: {
-                    let tab_id = tab_id.clone();
-                    move |_| queue_editor(window_id, tab_id.clone(), EditorAction::Save)
-                },
-                "Save"
-            }
-            button {
-                onclick: {
-                    let tab_id = tab_id.clone();
-                    move |_| queue_editor(window_id, tab_id.clone(), EditorAction::SaveAs)
-                },
-                "Save As…"
-            }
-            button {
-                onclick: {
-                    let tab_id = tab_id.clone();
-                    move |_| queue_editor(window_id, tab_id.clone(), EditorAction::SaveSelection)
-                },
-                "Save Selection As…"
-            }
-            button { onclick: move |_| runtime::apply(Message::CloseTab(window_id)), "Close Tab" }
-            button { onclick: move |_| runtime::apply(Message::CloseWindow(window_id)), "Close Window" }
-            button { onclick: move |_| runtime::apply(Message::OpenConnections(window_id)), "Connections…" }
-            button { onclick: move |_| runtime::apply(Message::InstallCli), "Install sqlg Command" }
-            button { onclick: move |_| runtime::apply(Message::UninstallCli), "Uninstall sqlg Command" }
-            button { onclick: move |_| runtime::apply(Message::Quit), "Quit" }
         }
     }
 }
@@ -638,7 +594,12 @@ fn EditorPane(window_id: u64, view: ShellView) -> Element {
                 }
             }
             if let Some(tab_id) = view.tab_id.clone() {
-                SqlEditor { key: "{tab_id}-{view.revision}", window_id, tab_id, revision: view.revision }
+                SqlEditor {
+                    key: "{tab_id}-{view.selected_connection}-{view.revision}",
+                    window_id,
+                    tab_id,
+                    revision: view.revision,
+                }
             }
             if !view.diagnostics.is_empty() {
                 div { class: "diagnostics",
@@ -766,25 +727,87 @@ fn DiagnosticRow(window_id: u64, tab_id: Option<String>, item: DiagnosticView) -
 fn ResultsPane(window_id: u64, view: ShellView) -> Element {
     rsx! {
         section { class: "results",
-            if view.results.is_empty() && view.restored {
-                p { class: "placeholder", "Run to see results" }
-            }
-            for section in view.results.clone() {
-                ResultBlock { window_id, tab_id: view.tab_id.clone(), section }
-            }
-            if view.more_rows {
-                button {
-                    onclick: {
-                        let tab_id = view.tab_id.clone();
-                        move |_| {
-                            let Some(tab_id) = tab_id.clone() else {
-                                return;
-                            };
-                            runtime::apply(Message::ShowMore { window: window_id, tab: tab_id });
-                        }
-                    },
-                    "Show more"
+            if !view.decks.is_empty() {
+                div { class: "decks",
+                    for deck in view.decks.clone() {
+                        DeckChip { window_id, tab_id: view.tab_id.clone(), deck }
+                    }
                 }
+            }
+            div { class: "result-scroll",
+                if view.results.is_empty() && view.restored {
+                    p { class: "placeholder", "Run to see results" }
+                }
+                for section in view.results.clone() {
+                    ResultBlock { window_id, tab_id: view.tab_id.clone(), section }
+                }
+                if view.more_rows {
+                    button {
+                        onclick: {
+                            let tab_id = view.tab_id.clone();
+                            move |_| {
+                                let Some(tab_id) = tab_id.clone() else {
+                                    return;
+                                };
+                                runtime::apply(Message::ShowMore { window: window_id, tab: tab_id });
+                            }
+                        },
+                        "Show more"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DeckChip(window_id: u64, tab_id: Option<String>, deck: DeckView) -> Element {
+    let index = deck.index;
+    let pinned = deck.pinned;
+    let class = if deck.active { "deck active" } else { "deck" };
+    rsx! {
+        div { class: "{class}",
+            button {
+                onclick: {
+                    let tab_id = tab_id.clone();
+                    move |_| {
+                        let Some(tab_id) = tab_id.clone() else {
+                            return;
+                        };
+                        runtime::apply(Message::SelectDeck {
+                            window: window_id,
+                            tab: tab_id,
+                            index,
+                        });
+                    }
+                },
+                "{deck.label}"
+            }
+            button {
+                class: "pin",
+                onclick: {
+                    let tab_id = tab_id.clone();
+                    move |event| {
+                        event.stop_propagation();
+                        let Some(tab_id) = tab_id.clone() else {
+                            return;
+                        };
+                        if pinned {
+                            runtime::apply(Message::UnpinDeck {
+                                window: window_id,
+                                tab: tab_id,
+                                index,
+                            });
+                        } else {
+                            runtime::apply(Message::PinDeck {
+                                window: window_id,
+                                tab: tab_id,
+                                index,
+                            });
+                        }
+                    }
+                },
+                if pinned { "Unpin" } else { "Pin" }
             }
         }
     }
@@ -1035,6 +1058,7 @@ struct ShellView {
     schema_hit: String,
     disk_notice: Option<String>,
     diagnostics: Vec<DiagnosticView>,
+    decks: Vec<DeckView>,
     results: Vec<SectionView>,
     more_rows: bool,
     restored: bool,
@@ -1220,13 +1244,33 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
                 .collect()
         })
         .unwrap_or_default();
-    let show_rows = tab
+    let deck = tab.and_then(|item| item.current_deck());
+    let show_rows = deck
         .map(|item| item.show_rows)
         .unwrap_or(logic::VISIBLE_ROWS);
     let widths = tab
         .map(|item| item.column_widths.clone())
         .unwrap_or_default();
-    let results = tab
+    let decks = tab
+        .map(|item| {
+            let active = if item.decks.is_empty() {
+                0
+            } else {
+                item.active_deck.min(item.decks.len() - 1)
+            };
+            item.decks
+                .iter()
+                .enumerate()
+                .map(|(index, deck)| DeckView {
+                    index,
+                    label: deck.label.clone(),
+                    pinned: deck.pinned,
+                    active: index == active,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let results = deck
         .map(|item| {
             item.results
                 .iter()
@@ -1234,7 +1278,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let more_rows = tab.is_some_and(|item| {
+    let more_rows = deck.is_some_and(|item| {
         item.results
             .iter()
             .any(|section| section.rows.len() > item.show_rows)
@@ -1290,10 +1334,11 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
             .filter(|item| item.disk_notice)
             .map(|item| item.id.clone()),
         diagnostics,
+        decks,
         results,
         more_rows,
         restored: tab.is_some_and(|item| item.restored),
-        footer: tab.map(|item| item.footer.clone()).unwrap_or_default(),
+        footer: deck.map(|item| item.footer.clone()).unwrap_or_default(),
         status: app.status.clone(),
         host_line,
         modal,
@@ -1439,6 +1484,61 @@ fn section_view(
     }
 }
 
+#[derive(Clone, PartialEq)]
+struct DeckView {
+    index: usize,
+    label: String,
+    pinned: bool,
+    active: bool,
+}
+
+fn claim_command(command: &str) -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static RECENT: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+    let mut recent = RECENT.lock().expect("command");
+    let now = Instant::now();
+    if let Some((name, at)) = recent.as_ref()
+        && name == command
+        && now.duration_since(*at) < Duration::from_millis(80)
+    {
+        return false;
+    }
+    *recent = Some((command.to_string(), now));
+    true
+}
+
+fn dispatch_menu(window_id: u64, command: &str) {
+    let target = {
+        let app = runtime::lock();
+        app.front.or_else(|| app.windows.first().map(|gui| gui.id))
+    };
+    if target != Some(window_id) || !claim_command(command) {
+        return;
+    }
+    let tab_id = {
+        let app = runtime::lock();
+        app.window(window_id)
+            .and_then(|gui| gui.active_tab())
+            .map(|tab| tab.id.clone())
+    };
+    match command {
+        "new-tab" => runtime::apply(Message::NewTab(window_id)),
+        "new-window" => runtime::apply(Message::NewWindow),
+        "open" => runtime::apply(Message::Open(window_id)),
+        "save" => queue_editor(window_id, tab_id, EditorAction::Save),
+        "save-as" => queue_editor(window_id, tab_id, EditorAction::SaveAs),
+        "save-selection" => queue_editor(window_id, tab_id, EditorAction::SaveSelection),
+        "close-tab" => runtime::apply(Message::CloseTab(window_id)),
+        "close-window" => runtime::apply(Message::CloseWindow(window_id)),
+        "connections" => runtime::apply(Message::OpenConnections(window_id)),
+        "install-cli" => runtime::apply(Message::InstallCli),
+        "uninstall-cli" => runtime::apply(Message::UninstallCli),
+        "quit" => runtime::apply(Message::Quit),
+        _ => {}
+    }
+}
+
 fn handle_key(window_id: u64, event: Event<KeyboardData>) {
     let key = event.key();
     if matches!(key, Key::Escape) {
@@ -1498,15 +1598,21 @@ fn handle_key(window_id: u64, event: Event<KeyboardData>) {
     }
     let action = if letter.eq_ignore_ascii_case("t") && !shift {
         event.prevent_default();
-        runtime::apply(Message::NewTab(window_id));
+        if claim_command("new-tab") {
+            runtime::apply(Message::NewTab(window_id));
+        }
         return;
     } else if letter.eq_ignore_ascii_case("n") && !shift {
         event.prevent_default();
-        runtime::apply(Message::NewWindow);
+        if claim_command("new-window") {
+            runtime::apply(Message::NewWindow);
+        }
         return;
     } else if letter.eq_ignore_ascii_case("o") && !shift {
         event.prevent_default();
-        runtime::apply(Message::Open(window_id));
+        if claim_command("open") {
+            runtime::apply(Message::Open(window_id));
+        }
         return;
     } else if letter.eq_ignore_ascii_case("s") && shift {
         event.prevent_default();
@@ -1516,15 +1622,21 @@ fn handle_key(window_id: u64, event: Event<KeyboardData>) {
         EditorAction::Save
     } else if letter.eq_ignore_ascii_case("w") && shift {
         event.prevent_default();
-        runtime::apply(Message::CloseWindow(window_id));
+        if claim_command("close-window") {
+            runtime::apply(Message::CloseWindow(window_id));
+        }
         return;
     } else if letter.eq_ignore_ascii_case("w") {
         event.prevent_default();
-        runtime::apply(Message::CloseTab(window_id));
+        if claim_command("close-tab") {
+            runtime::apply(Message::CloseTab(window_id));
+        }
         return;
     } else if letter.eq_ignore_ascii_case("q") {
         event.prevent_default();
-        runtime::apply(Message::Quit);
+        if claim_command("quit") {
+            runtime::apply(Message::Quit);
+        }
         return;
     } else if letter.eq_ignore_ascii_case("z") && shift {
         event.prevent_default();
@@ -1548,12 +1660,23 @@ fn handle_key(window_id: u64, event: Event<KeyboardData>) {
         return;
     } else if letter == "," && !shift {
         event.prevent_default();
-        runtime::apply(Message::OpenConnections(window_id));
+        if claim_command("connections") {
+            runtime::apply(Message::OpenConnections(window_id));
+        }
         return;
     } else {
         return;
     };
-    queue_editor(window_id, tab_id, action);
+    let command = match action {
+        EditorAction::Save => "save",
+        EditorAction::SaveAs => "save-as",
+        EditorAction::SaveSelection => "save-selection",
+        EditorAction::Run => "run",
+        EditorAction::RunStatement => "run-statement",
+    };
+    if claim_command(command) {
+        queue_editor(window_id, tab_id, action);
+    }
 }
 
 fn character(key: &Key) -> Option<&str> {

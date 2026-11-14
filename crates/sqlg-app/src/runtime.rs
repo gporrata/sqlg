@@ -466,13 +466,13 @@ fn window_config(geometry: &WindowGeometry) -> Config {
         builder = builder.with_fullscreen(Some(Fullscreen::Borderless(None)));
     }
     let background = if geometry.dark {
-        (30, 30, 30, 255)
+        crate::webcolor!("#1e1e1e").rgba()
     } else {
-        (244, 246, 247, 255)
+        crate::webcolor!("#f4f6f7").rgba()
     };
     Config::new()
         .with_window(builder)
-        .with_menu(None)
+        .with_menu(crate::menu::app_menu())
         .with_close_behaviour(WindowCloseBehaviour::WindowHides)
         .with_custom_head(HEAD.to_string())
         .with_background_color(background)

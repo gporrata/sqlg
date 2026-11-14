@@ -217,7 +217,30 @@ pub fn update(app: &mut App, message: Message) -> Vec<Effect> {
         }
         Message::ShowMore { window, tab } => {
             if let Some(tab) = app.tab_mut(window, &tab) {
-                tab.show_rows = tab.show_rows.saturating_add(logic::VISIBLE_ROWS);
+                if !tab.decks.is_empty() {
+                    let index = tab.active_deck.min(tab.decks.len() - 1);
+                    tab.decks[index].show_rows = tab.decks[index]
+                        .show_rows
+                        .saturating_add(logic::VISIBLE_ROWS);
+                }
+            }
+            Vec::new()
+        }
+        Message::SelectDeck { window, tab, index } => {
+            if let Some(tab) = app.tab_mut(window, &tab) {
+                tab.select_deck(index);
+            }
+            Vec::new()
+        }
+        Message::PinDeck { window, tab, index } => {
+            if let Some(tab) = app.tab_mut(window, &tab) {
+                tab.pin_deck(index);
+            }
+            Vec::new()
+        }
+        Message::UnpinDeck { window, tab, index } => {
+            if let Some(tab) = app.tab_mut(window, &tab) {
+                tab.unpin_deck(index);
             }
             Vec::new()
         }
@@ -518,6 +541,7 @@ enum RunPrep {
     Busy,
     NoConnection,
     Empty,
+    EmptyNotice,
     Ready { sql: String, name: String },
 }
 
@@ -531,14 +555,13 @@ fn start_run(app: &mut App, window: u64, tab_id: &str, statement: bool) -> Vec<E
         } else if let Some(name) = tab.connection_name.clone() {
             let sql = tab.sql_to_run(statement);
             if sql.trim().is_empty() {
-                tab.footer = "Nothing to run".into();
-                RunPrep::Empty
+                if !tab.set_idle_footer("Nothing to run") {
+                    RunPrep::EmptyNotice
+                } else {
+                    RunPrep::Empty
+                }
             } else {
-                tab.results.clear();
-                tab.show_rows = logic::VISIBLE_ROWS;
-                tab.running = true;
-                tab.restored = false;
-                tab.footer = "Running…".into();
+                tab.prepare_run();
                 RunPrep::Ready { sql, name }
             }
         } else {
@@ -547,6 +570,10 @@ fn start_run(app: &mut App, window: u64, tab_id: &str, statement: bool) -> Vec<E
     };
     let (sql, name) = match prep {
         RunPrep::Busy | RunPrep::Empty => return Vec::new(),
+        RunPrep::EmptyNotice => {
+            app.status = "Nothing to run".into();
+            return Vec::new();
+        }
         RunPrep::NoConnection => {
             app.status = "Choose a connection".into();
             return Vec::new();
@@ -582,10 +609,16 @@ fn on_query(app: &mut App, window: u64, tab: &str, run_id: &str, event: QueryEve
     let Some(tab_state) = app.tab_mut(window, tab) else {
         return Vec::new();
     };
-    if tab_state.run_id != run_id {
+    if tab_state.run_id == run_id {
+        tab_state.apply_query_event(event);
         return Vec::new();
     }
-    tab_state.apply_query_event(event);
+    for editor in tab_state.editors.values_mut() {
+        if editor.run_id == run_id {
+            editor.apply_query_event(event);
+            return Vec::new();
+        }
+    }
     Vec::new()
 }
 
@@ -614,25 +647,25 @@ fn on_new_tab(app: &mut App, window: u64) -> Vec<Effect> {
 }
 
 fn on_set_connection(app: &mut App, window: u64, tab: &str, name: String) -> Vec<Effect> {
-    if name.is_empty() {
-        if let Some(tab_state) = app.tab_mut(window, tab) {
-            tab_state.connection_name = None;
-            tab_state.results.clear();
-            tab_state.footer.clear();
-            tab_state.diagnostics.clear();
+    let next = (!name.is_empty()).then(|| name);
+    let changed = {
+        let Some(tab_state) = app.tab_mut(window, tab) else {
+            return Vec::new();
+        };
+        let changed = tab_state.connection_name != next;
+        if changed {
+            tab_state.switch_connection(next.clone());
         }
-        app.save_session();
-        return Vec::new();
-    }
-    if let Some(tab_state) = app.tab_mut(window, tab) {
-        tab_state.connection_name = Some(name.clone());
-        tab_state.results.clear();
-        tab_state.footer.clear();
-        tab_state.diagnostics.clear();
-    }
+        changed
+    };
     app.save_session();
+    let Some(name) = next else {
+        return Vec::new();
+    };
     let mut effects = ensure_schema(app, &name);
-    effects.extend(schedule_lint(app, window, tab));
+    if changed {
+        effects.extend(schedule_lint(app, window, tab));
+    }
     effects.push(ping_connection(&name));
     effects
 }
@@ -822,8 +855,11 @@ fn adopt_file(tab: &mut Tab, path: &Path, file: &TextFile) {
     tab.bom = file.bom;
     tab.seen_modified = files::file_modified(path);
     tab.disk_notice = false;
-    tab.results.clear();
-    tab.footer.clear();
+    tab.decks.clear();
+    tab.active_deck = 0;
+    tab.run_deck = 0;
+    tab.running = false;
+    tab.run_id.clear();
 }
 
 fn on_reload_disk(app: &mut App, window: u64, tab: &str) -> Vec<Effect> {
@@ -1070,13 +1106,9 @@ fn apply_close_choice(app: &mut App, save: bool) -> Vec<Effect> {
             app.dirty_tabs(Some(prompt.window))
         };
         for (window_id, tab_id) in targets {
-            let failed = app.tab_mut(window_id, &tab_id).and_then(|tab| {
-                if tab.needs_file_save() {
-                    write_linked(tab).err()
-                } else {
-                    None
-                }
-            });
+            let failed = app
+                .tab_mut(window_id, &tab_id)
+                .and_then(|tab| save_dirty_screens(tab).err());
             if let Some(err) = failed {
                 app.status = err;
                 app.modal = Modal::Close(prompt);
@@ -1426,6 +1458,42 @@ fn write_linked(tab: &mut Tab) -> Result<(), String> {
     tab.saved_sql = Some(text);
     tab.seen_modified = files::file_modified(Path::new(&path));
     tab.disk_notice = false;
+    Ok(())
+}
+
+fn save_dirty_screens(tab: &mut Tab) -> Result<(), String> {
+    if logic::needs_file_save(
+        &tab.sql(),
+        tab.file_path.as_deref(),
+        tab.saved_sql.as_deref(),
+    ) {
+        write_linked(tab)?;
+    }
+    let names: Vec<String> = tab
+        .editors
+        .iter()
+        .filter(|(_, editor)| {
+            logic::needs_file_save(
+                &editor.buffer.text,
+                editor.file_path.as_deref(),
+                editor.saved_sql.as_deref(),
+            )
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in names {
+        let Some(editor) = tab.editors.get_mut(&name) else {
+            continue;
+        };
+        let Some(path) = editor.file_path.clone() else {
+            continue;
+        };
+        let text = editor.buffer.text.clone();
+        files::write_sql_file(Path::new(&path), &text, &editor.newline, editor.bom)?;
+        editor.saved_sql = Some(text);
+        editor.seen_modified = files::file_modified(Path::new(&path));
+        editor.disk_notice = false;
+    }
     Ok(())
 }
 

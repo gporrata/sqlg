@@ -411,9 +411,17 @@ pub fn find_theme(id: &str) -> &'static AppTheme {
         .unwrap_or(&THEMES[0])
 }
 
+pub fn choose_readable_color(dark: bool) -> WebColor {
+    if dark {
+        webcolor!("#f4f4f5")
+    } else {
+        webcolor!("#1c1c1e")
+    }
+}
+
 pub fn css_vars(theme: &AppTheme) -> String {
     format!(
-        "--bg:{bg};--panel:{panel};--ink:{ink};--muted:{muted};--line:{line};--accent:{accent};--accent-ink:{accent_ink};--danger:{danger};--editor:{editor};--chip:{chip};--warn:{warn};--syn-keyword:{keyword};--syn-operator:{operator};--syn-string:{string};--syn-number:{number};--syn-comment:{comment}",
+        "--bg:{bg};--panel:{panel};--ink:{ink};--muted:{muted};--line:{line};--accent:{accent};--accent-ink:{accent_ink};--danger:{danger};--editor:{editor};--chip:{chip};--warn:{warn};--readable:{readable};--syn-keyword:{keyword};--syn-operator:{operator};--syn-string:{string};--syn-number:{number};--syn-comment:{comment}",
         bg = theme.bg.css(),
         panel = theme.panel.css(),
         ink = theme.ink.css(),
@@ -425,11 +433,12 @@ pub fn css_vars(theme: &AppTheme) -> String {
         editor = theme.editor.css(),
         chip = theme.chip.css(),
         warn = theme.warn.css(),
-        keyword = theme.keyword.css(),
-        operator = theme.operator.css(),
-        string = theme.string.css(),
-        number = theme.number.css(),
-        comment = theme.comment.css(),
+        readable = choose_readable_color(theme.dark).css(),
+        keyword = theme.keyword.ensure_contrast(theme.editor).css(),
+        operator = theme.operator.ensure_contrast(theme.editor).css(),
+        string = theme.string.ensure_contrast(theme.editor).css(),
+        number = theme.number.ensure_contrast(theme.editor).css(),
+        comment = theme.comment.ensure_contrast(theme.editor).css(),
     )
 }
 
@@ -466,6 +475,32 @@ mod tests {
         assert_eq!(dark_pro.panel, "#21252b");
         assert_eq!(dark_pro.accent, "#528bff");
         assert!(css_vars(ayu).contains("--editor:#10141c"));
+        for theme in THEMES {
+            let style = css_vars(theme);
+            let readable = choose_readable_color(theme.dark);
+            assert!(
+                readable.contrast_with(theme.editor) >= 7.0
+                    && readable.contrast_with(theme.panel) >= 7.0,
+                "{}",
+                theme.id
+            );
+            assert!(style.contains(&format!("--readable:{}", readable.css())));
+            for (name, color) in [
+                ("keyword", theme.keyword),
+                ("operator", theme.operator),
+                ("string", theme.string),
+                ("number", theme.number),
+                ("comment", theme.comment),
+            ] {
+                let shown = color.ensure_contrast(theme.editor);
+                assert!(
+                    shown.contrast_with(theme.editor) >= 4.5,
+                    "{} {name}",
+                    theme.id
+                );
+                assert!(style.contains(&format!("--syn-{name}:{}", shown.css())));
+            }
+        }
         let mut ids = THEMES.iter().map(|theme| theme.id).collect::<Vec<_>>();
         ids.sort_unstable();
         ids.dedup();

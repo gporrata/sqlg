@@ -174,6 +174,12 @@ pub fn update(app: &mut App, message: Message) -> Vec<Effect> {
             reveal_schema_match(app, window, false);
             Vec::new()
         }
+        Message::ToggleSchemaFind { window } => {
+            if let Some(gui) = app.window_mut(window) {
+                gui.toggle_schema_find();
+            }
+            Vec::new()
+        }
         Message::SchemaNext { window } => {
             reveal_schema_match(app, window, true);
             Vec::new()

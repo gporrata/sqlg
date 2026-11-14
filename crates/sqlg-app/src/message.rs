@@ -134,6 +134,9 @@ pub enum Message {
         window: u64,
         query: String,
     },
+    ToggleSchemaFind {
+        window: u64,
+    },
     SchemaNext {
         window: u64,
     },

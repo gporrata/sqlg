@@ -10,7 +10,7 @@
 - The app **starts with one tab**.
 - **⌘T** – New Tab: opens a tab that **inherits the current tab's connection**.
 - **⌘N** – New Window: opens a new window with **one fresh tab**.
-- Shortcuts are handled by the app: ⌘T new tab, ⌘N new window, ⌘O open, ⌘S save, ⇧⌘S save as, ⌘W close tab, ⇧⌘W close window, ⌘Q quit, ⌘, connections, ⌘↵ run, ⇧⌘↵ statement at the cursor, and ⌘Z / ⇧⌘Z undo and redo in the editor. Alt+F focuses the schema search. While that search has text, Ctrl+N selects the next schema, table, or column.
+- Shortcuts are handled by the app: ⌘T new tab, ⌘N new window, ⌘O open, ⌘S save, ⇧⌘S save as, ⌘W close tab, ⇧⌘W close window, ⌘Q quit, ⌘, connections, ⌘↵ run, ⇧⌘↵ statement at the cursor, and ⌘Z / ⇧⌘Z undo and redo in the editor. Alt+F shows the schema search under Reload and focuses it. Alt+F again hides it. Enter in that field selects the next schema, table, or column.
 - The File menu is the system menu. On macOS it is in the application menu bar, with Quit, Connections, and the sqlg command under the application menu. On Ubuntu it is the window menu bar. The items are New Tab, New Window, Open…, Save, Save As…, Save Selection As…, Close Tab, Close Window, Connections…, Install sqlg Command, Uninstall sqlg Command, and Quit. Edit holds Cut, Copy, Paste, and Select All.
 
 ### Tab title (automatic, not user-editable)
@@ -19,8 +19,8 @@ Every tab shows a **connection badge** (a pill with the connection name, colored
    - Supported forms: `-- text`, `# text` (MySQL), `/* text */`. Strip the markers, trim, and collapse whitespace. For a block comment, use its first non-empty line.
    - Truncate to about 30 characters with `…`. The full comment is shown in a tooltip.
    - Comment markers inside string literals don't count (use the editor's SQL syntax tree). MySQL `/*! … */` version comments are ignored.
-2. **No comment:** badge + the **query text itself**, with whitespace (including newlines) collapsed to single spaces. It fills the available tab width and is truncated with an ellipsis. The tooltip shows the full first statement.
-3. **Empty editor:** just the badge. *Suggestion:* show a muted, italic `New query` placeholder after it.
+2. **No comment:** the tab does not show the query text. The tooltip still shows the first statement, with whitespace collapsed.
+3. **Empty editor:** a muted `New query` placeholder.
 - Titles update live as the editor changes, debounced (about 300 ms). Running a query doesn't change the title.
 - Users can't edit titles directly. To control a tab's name, add or change its first comment.
 - *Suggestion:* make the badge color a per-connection setting in the Connections dialog, with red the default for names like `prod`.

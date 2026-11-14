@@ -66,17 +66,13 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .schema, .editor-pane, .results { min-width: 0; min-height: 0; }
 .schema { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
 .schema .actions { padding: 6px; }
-.schema .actions button { display: block; width: 100%; text-align: left; }
-.schema .actions button:hover { background: var(--chip); }
-.schema .find { box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); color: var(--ink); }
-.tree { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.schema .find { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); color: var(--readable); }
+.tree { flex: 1; min-height: 0; overflow: auto; position: relative; color: var(--readable); }
 .tn { position: relative; display: flex; align-items: center; gap: 4px; width: calc(100% - 8px); box-sizing: border-box; height: 24px; margin: 0 4px; border-radius: 5px; white-space: nowrap; }
 .tn:hover { background: var(--chip); }
 .tn.hit { background: color-mix(in srgb, var(--accent) 32%, transparent); }
-.tn.schema .nm, .ic.schema { color: #5b6b82; }
-.tn.table .nm, .ic.table { color: #3478f6; }
-.shell.dark .tn.schema .nm, .shell.dark .ic.schema { color: #a9b7c9; }
-.shell.dark .tn.table .nm, .shell.dark .ic.table { color: #7cb0ff; }
+.tn.schema .nm, .ic.schema { color: var(--readable); }
+.tn.table .nm, .ic.table { color: var(--accent); }
 .tn .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ty { flex: none; margin-left: auto; width: var(--type-ch, auto); white-space: nowrap; text-align: left; color: var(--tone-other); font: 10.5px Menlo, monospace; padding-right: 6px; }
 .tone-num { color: var(--tone-num); }
@@ -97,15 +93,10 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .editor-pane, .results { display: flex; flex-direction: column; background: var(--editor); }
 .sql-editor { position: relative; flex: 1; min-height: 0; }
 .sql-highlight, .sql-editor textarea { box-sizing: border-box; margin: 0; padding: 8px; border: 0; width: 100%; height: 100%; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: normal; tab-size: 4; }
-.sql-highlight { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: var(--ink); background: transparent; }
+.sql-highlight { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: transparent; background: transparent; }
 .sql-highlight::-webkit-scrollbar { display: none; }
-.sql-editor textarea { position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: transparent; caret-color: var(--ink); }
-.sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: transparent; }
-.sql-kw { color: var(--syn-keyword); }
-.sql-str { color: var(--syn-string); }
-.sql-num { color: var(--syn-number); }
-.sql-com { color: var(--syn-comment); }
-.sql-op { color: var(--syn-operator); }
+.sql-editor textarea { position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: var(--readable); caret-color: var(--readable); }
+.sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--readable); }
 .diagnostics, .banner { padding: 4px 8px; background: var(--panel); border-top: 1px solid var(--line); }
 .diagnostic { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
 .diagnostic.warn { color: var(--warn); }
@@ -319,7 +310,9 @@ fn TabChip(window_id: u64, tab: TabChipView) -> Element {
             },
             title: "{title}",
             onclick: move |_| runtime::apply(Message::SelectTab { window: window_id, index }),
-            span { class: "label", "{tab.label}" }
+            if !tab.label.is_empty() {
+                span { class: "label", "{tab.label}" }
+            }
             span { class: "dot" }
             button {
                 class: "close",
@@ -366,7 +359,9 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
                     onclick: move |_| runtime::apply(Message::ReloadSchema { window: window_id }),
                     "Reload"
                 }
-                SchemaSearch { window_id }
+                if view.schema_find {
+                    SchemaSearch { window_id }
+                }
             }
             if let Some(message) = view.schema_message.clone() {
                 p { class: "muted", "{message}" }
@@ -388,14 +383,32 @@ fn SchemaSearch(window_id: u64) -> Element {
             .map(|gui| gui.schema_query.clone())
             .unwrap_or_default()
     });
+    use_effect(move || {
+        spawn(async move {
+            focus_schema_search().await;
+        });
+    });
     rsx! {
         input {
             id: "schema-search",
             class: "find",
             spellcheck: "false",
             autocomplete: "off",
-            placeholder: "Find schema, table, or column",
-            aria_label: "Find schema, table, or column",
+            placeholder: "Search",
+            aria_label: "Search",
+            onkeydown: move |event| {
+                let modifiers = event.modifiers();
+                if event.key() != Key::Enter
+                    || modifiers.alt()
+                    || modifiers.ctrl()
+                    || modifiers.meta()
+                    || modifiers.shift()
+                {
+                    return;
+                }
+                event.prevent_default();
+                runtime::apply(Message::SchemaNext { window: window_id });
+            },
             oninput: move |event| {
                 runtime::apply(Message::SchemaQuery {
                     window: window_id,
@@ -1056,6 +1069,7 @@ struct ShellView {
     schema_message: Option<String>,
     schema: Vec<SchemaNodeView>,
     schema_hit: String,
+    schema_find: bool,
     disk_notice: Option<String>,
     diagnostics: Vec<DiagnosticView>,
     decks: Vec<DeckView>,
@@ -1330,6 +1344,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
         schema_message,
         schema: schema_nodes,
         schema_hit,
+        schema_find: gui.schema_find,
         disk_notice: tab
             .filter(|item| item.disk_notice)
             .map(|item| item.id.clone()),
@@ -1550,25 +1565,8 @@ fn handle_key(window_id: u64, event: Event<KeyboardData>) {
     let code = event.code();
     if modifiers.alt() && !modifiers.meta() && !modifiers.ctrl() && code == Code::KeyF {
         event.prevent_default();
-        spawn(async move {
-            focus_schema_search().await;
-        });
+        runtime::apply(Message::ToggleSchemaFind { window: window_id });
         return;
-    }
-    if modifiers.ctrl()
-        && !modifiers.meta()
-        && !modifiers.alt()
-        && !modifiers.shift()
-        && code == Code::KeyN
-    {
-        let searching = runtime::lock()
-            .window(window_id)
-            .is_some_and(|gui| !gui.schema_query.trim().is_empty());
-        if searching {
-            event.prevent_default();
-            runtime::apply(Message::SchemaNext { window: window_id });
-            return;
-        }
     }
     let command = modifiers.meta() || modifiers.ctrl();
     if !command || runtime::lock().blocks_shortcuts() {

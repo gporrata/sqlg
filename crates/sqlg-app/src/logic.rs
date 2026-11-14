@@ -114,34 +114,34 @@ pub fn derive_title(sql: &str) -> DerivedTitle {
             };
         }
     }
-    let query = collapse(&first_statement(sql));
-    if query.is_empty() {
-        return DerivedTitle {
-            label: String::new(),
-            tooltip: String::new(),
-            placeholder: true,
-        };
-    }
     DerivedTitle {
-        label: truncate(&query, 30),
-        tooltip: query,
-        placeholder: false,
+        label: String::new(),
+        tooltip: String::new(),
+        placeholder: true,
     }
 }
 
 pub fn tab_label(sql: &str) -> String {
     let title = derive_title(sql);
-    if title.placeholder {
+    if !title.placeholder {
+        return title.label;
+    }
+    if sql.trim().is_empty() {
         "New query".into()
     } else {
-        title.label
+        String::new()
     }
 }
 
 pub fn tab_tooltip(sql: &str, file_path: Option<&str>) -> String {
     let title = derive_title(sql);
     let base = if title.placeholder {
-        "New query".to_string()
+        let query = collapse(&first_statement(sql));
+        if query.is_empty() {
+            "New query".to_string()
+        } else {
+            query
+        }
     } else {
         title.tooltip
     };
@@ -588,6 +588,12 @@ mod tests {
         let empty = derive_title("   \n");
         assert!(empty.placeholder);
         assert_eq!(tab_label(""), "New query");
+        assert_eq!(tab_label("select 1"), "");
+        assert!(derive_title("select 1").placeholder);
+        assert_eq!(
+            tab_tooltip("select 1 from trips", None),
+            "select 1 from trips"
+        );
     }
 
     #[test]

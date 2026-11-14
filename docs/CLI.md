@@ -46,7 +46,7 @@ sqlg query <conn> (-e '<sql>' | -f <file.sql> | < stdin)
 ```
 - Opens the SQL in the GUI and runs it there. Results appear in the GUI, not in the terminal.
 - `--tab` (the default) opens a new tab in the frontmost window, or a new window if none is open. `--new-window` always opens a new window with one tab.
-- `--title '<name>'` inserts `-- <name>` as the **first line of the SQL**. The tab title then follows the normal rule (first comment becomes the title). Newlines in the value are replaced with spaces. If the SQL already starts with comments, the inserted line comes first, so it wins. Without `--title`, the title comes from the SQL's own first comment, or else from the collapsed query text. Every tab also shows the connection badge.
+- `--title '<name>'` inserts `-- <name>` as the **first line of the SQL**. The tab title then follows the normal rule (first comment becomes the title). Newlines in the value are replaced with spaces. If the SQL already starts with comments, the inserted line comes first, so it wins. Without `--title`, the title comes from the SQL's own first comment. The query text itself is not shown on the tab. Every tab also shows the connection badge.
 - `--no-run` loads the SQL into the editor without running it. This is useful for `prod`.
 - SQL is read from `-e`, then `-f`, then stdin (when stdin isn't a TTY). Giving more than one source is a usage error.
 - The command returns once the GUI has accepted the request. It doesn't wait for the query to finish.

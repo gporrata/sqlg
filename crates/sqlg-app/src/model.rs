@@ -56,6 +56,7 @@ pub struct GuiWindow {
     pub expanded: HashSet<String>,
     pub schema_query: String,
     pub schema_match: usize,
+    pub schema_find: bool,
 }
 
 pub struct Tab {
@@ -330,7 +331,14 @@ impl App {
     pub fn title(&self, id: u64) -> String {
         self.window(id)
             .and_then(|gui| gui.active_tab())
-            .map(|tab| format!("sqlg — {}", tab.label()))
+            .map(|tab| {
+                let label = tab.label();
+                if label.is_empty() {
+                    "sqlg".into()
+                } else {
+                    format!("sqlg — {label}")
+                }
+            })
             .unwrap_or_else(|| "sqlg".into())
     }
 }
@@ -358,6 +366,7 @@ impl GuiWindow {
             expanded: HashSet::new(),
             schema_query: String::new(),
             schema_match: 0,
+            schema_find: false,
         }
     }
 
@@ -391,7 +400,18 @@ impl GuiWindow {
             expanded: HashSet::new(),
             schema_query: String::new(),
             schema_match: 0,
+            schema_find: false,
         }
+    }
+
+    pub fn toggle_schema_find(&mut self) {
+        if self.schema_find {
+            self.schema_find = false;
+            self.schema_query.clear();
+            self.schema_match = 0;
+            return;
+        }
+        self.schema_find = true;
     }
 
     pub fn active_tab(&self) -> Option<&Tab> {
@@ -1048,6 +1068,20 @@ pub fn ordered(anchor: usize, head: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_find_toggles_and_clears_the_query() {
+        let mut gui = GuiWindow::fresh(1);
+        gui.schema_query = "trip".into();
+        gui.schema_match = 2;
+        gui.toggle_schema_find();
+        assert!(gui.schema_find);
+        assert_eq!(gui.schema_query, "trip");
+        gui.toggle_schema_find();
+        assert!(!gui.schema_find);
+        assert!(gui.schema_query.is_empty());
+        assert_eq!(gui.schema_match, 0);
+    }
 
     #[test]
     fn switching_connections_keeps_each_editor() {

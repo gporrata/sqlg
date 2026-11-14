@@ -1,14 +1,14 @@
 use std::fs::OpenOptions;
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use sqlg_core::{
-    BUNDLE_ID, CliRequest, Connection, ConnectionPatch, Secrets, Store, StoreError, data_dir,
-    insert_title,
+    CliRequest, Connection, ConnectionPatch, Secrets, Store, StoreError, data_dir, insert_title,
 };
+
+mod launch;
 
 #[derive(Parser)]
 #[command(
@@ -392,18 +392,8 @@ fn query(
         eprintln!("could not write request: {err}");
         return 1;
     }
-    let status = Command::new("open")
-        .args([
-            "-n",
-            "-b",
-            BUNDLE_ID,
-            "--args",
-            "--cli-request",
-            &req_path.display().to_string(),
-        ])
-        .status();
-    if status.map(|s| !s.success()).unwrap_or(true) {
-        eprintln!("could not launch {BUNDLE_ID}");
+    if !launch::deliver_request(&data_dir(), &req_path) {
+        eprintln!("could not reach sqlg");
         let _ = std::fs::remove_file(&req_path);
         return 5;
     }

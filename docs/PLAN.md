@@ -1,5 +1,7 @@
 # sqlg — Implementation Plan
 
+This plan describes the original Tauri and React build. The desktop UI is now Dioxus 0.7.10 in `crates/sqlg-app`. Read `docs/SPEC.md` for current behavior.
+
 Repo: `~/personal/sqlg` (GitHub remote `origin`). The app and CLI are both named **sqlg**.
 Read `docs/SPEC.md`, `docs/CLI.md` and `docs/mockups/*.png` first. Implement milestone by milestone. After each milestone: build, run the tests, and **commit**.
 

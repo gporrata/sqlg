@@ -1,21 +1,36 @@
 # Release install for the macOS app.
 #
-#   make build     pnpm tauri build
-#   make install   quit sqlg, copy the bundle into /Applications, open it
+#   make build     release binaries for sqlg-app and sqlg
+#   make install   install those binaries and copy sqlg.app into /Applications
 #   make clean     remove build output
 
 .PHONY: build install clean
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-BUNDLE := $(ROOT)/target/release/bundle/macos/sqlg.app
 APP := /Applications/sqlg.app
+STAGE := $(ROOT)/target/sqlg.app
+RELEASE_APP := $(ROOT)/target/release/sqlg-app
+RELEASE_CLI := $(ROOT)/target/release/sqlg
+
+ifeq ($(wildcard $(HOME)/.cargo/bin),)
+CARGO_ROOT := $(HOME)/.local
+else
+CARGO_ROOT := $(HOME)/.cargo
+endif
 
 build:
-	pnpm tauri build
+	cargo build --release -p sqlg-app -p sqlg-cli
 
-install:
-	@if [ ! -d "$(BUNDLE)" ]; then $(MAKE) build; fi
-	@test -d "$(BUNDLE)" || { echo "missing $(BUNDLE)" >&2; exit 1; }
+install: build
+	cargo install --path "$(ROOT)/crates/sqlg-app" --root "$(CARGO_ROOT)" --force --locked
+	cargo install --path "$(ROOT)/crates/sqlg-cli" --root "$(CARGO_ROOT)" --force --locked
+	rm -rf "$(STAGE)"
+	mkdir -p "$(STAGE)/Contents/MacOS" "$(STAGE)/Contents/Resources"
+	cp "$(ROOT)/packaging/Info.plist" "$(STAGE)/Contents/Info.plist"
+	cp "$(ROOT)/packaging/icon.icns" "$(STAGE)/Contents/Resources/icon.icns"
+	cp "$(RELEASE_APP)" "$(STAGE)/Contents/MacOS/sqlg-app"
+	cp "$(RELEASE_CLI)" "$(STAGE)/Contents/MacOS/sqlg"
+	chmod +x "$(STAGE)/Contents/MacOS/sqlg-app" "$(STAGE)/Contents/MacOS/sqlg"
 	-killall sqlg-app
 	@i=0; \
 	while pgrep -x sqlg-app >/dev/null; do \
@@ -24,11 +39,9 @@ install:
 		sleep 0.25; \
 	done
 	rm -rf "$(APP)"
-	cp -R "$(BUNDLE)" "$(APP)"
-	xattr -dr com.apple.quarantine "$(APP)"
-	cmp "$(BUNDLE)/Contents/MacOS/sqlg-app" "$(APP)/Contents/MacOS/sqlg-app"
+	cp -R "$(STAGE)" "$(APP)"
+	xattr -dr com.apple.quarantine "$(APP)" || true
 	open "$(APP)"
 
 clean:
 	cargo clean --manifest-path "$(ROOT)/Cargo.toml"
-	rm -rf "$(ROOT)/dist"

@@ -419,6 +419,22 @@ pub fn choose_readable_color(dark: bool) -> WebColor {
     }
 }
 
+pub fn choose_syntax_color(dark: bool, role: &str) -> WebColor {
+    match (dark, role) {
+        (true, "keyword") => webcolor!("#e2b6ff"),
+        (true, "string") => webcolor!("#9ee6a8"),
+        (true, "number") => webcolor!("#ffd08a"),
+        (true, "comment") => webcolor!("#c5ced9"),
+        (true, "operator") => webcolor!("#9fd4ff"),
+        (false, "keyword") => webcolor!("#6b21a8"),
+        (false, "string") => webcolor!("#166534"),
+        (false, "number") => webcolor!("#9a3412"),
+        (false, "comment") => webcolor!("#3f4a57"),
+        (false, "operator") => webcolor!("#1d4e89"),
+        _ => choose_readable_color(dark),
+    }
+}
+
 pub fn css_vars(theme: &AppTheme) -> String {
     format!(
         "--bg:{bg};--panel:{panel};--ink:{ink};--muted:{muted};--line:{line};--accent:{accent};--accent-ink:{accent_ink};--danger:{danger};--editor:{editor};--chip:{chip};--warn:{warn};--readable:{readable};--syn-keyword:{keyword};--syn-operator:{operator};--syn-string:{string};--syn-number:{number};--syn-comment:{comment}",
@@ -434,11 +450,21 @@ pub fn css_vars(theme: &AppTheme) -> String {
         chip = theme.chip.css(),
         warn = theme.warn.css(),
         readable = choose_readable_color(theme.dark).css(),
-        keyword = theme.keyword.ensure_contrast(theme.editor).css(),
-        operator = theme.operator.ensure_contrast(theme.editor).css(),
-        string = theme.string.ensure_contrast(theme.editor).css(),
-        number = theme.number.ensure_contrast(theme.editor).css(),
-        comment = theme.comment.ensure_contrast(theme.editor).css(),
+        keyword = choose_syntax_color(theme.dark, "keyword")
+            .ensure_contrast(theme.editor)
+            .css(),
+        operator = choose_syntax_color(theme.dark, "operator")
+            .ensure_contrast(theme.editor)
+            .css(),
+        string = choose_syntax_color(theme.dark, "string")
+            .ensure_contrast(theme.editor)
+            .css(),
+        number = choose_syntax_color(theme.dark, "number")
+            .ensure_contrast(theme.editor)
+            .css(),
+        comment = choose_syntax_color(theme.dark, "comment")
+            .ensure_contrast(theme.editor)
+            .css(),
     )
 }
 
@@ -485,14 +511,11 @@ mod tests {
                 theme.id
             );
             assert!(style.contains(&format!("--readable:{}", readable.css())));
-            for (name, color) in [
-                ("keyword", theme.keyword),
-                ("operator", theme.operator),
-                ("string", theme.string),
-                ("number", theme.number),
-                ("comment", theme.comment),
-            ] {
-                let shown = color.ensure_contrast(theme.editor);
+            assert!(theme.operator.css().starts_with('#'));
+            assert!(theme.number.css().starts_with('#'));
+            assert!(theme.comment.css().starts_with('#'));
+            for name in ["keyword", "operator", "string", "number", "comment"] {
+                let shown = choose_syntax_color(theme.dark, name).ensure_contrast(theme.editor);
                 assert!(
                     shown.contrast_with(theme.editor) >= 4.5,
                     "{} {name}",

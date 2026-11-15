@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use sqlg_core::{SqlTone, highlight_sql};
+use sqlg_core::SqlTone;
 use sqlg_mysql::SchemaSnapshot;
 
 use crate::logic::{self, ColumnMark, Panes};
@@ -97,10 +97,20 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .editor-pane, .results { display: flex; flex-direction: column; background: var(--editor); }
 .sql-editor { position: relative; flex: 1; min-height: 0; }
 .sql-highlight, .sql-editor textarea { box-sizing: border-box; margin: 0; padding: 8px; border: 0; width: 100%; height: 100%; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: normal; tab-size: 4; }
-.sql-highlight { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: transparent; background: transparent; }
+.sql-highlight { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: var(--readable); background: transparent; }
 .sql-highlight::-webkit-scrollbar { display: none; }
-.sql-editor textarea { position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: var(--readable); caret-color: var(--readable); }
-.sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--readable); }
+.sql-kw { color: var(--syn-keyword); }
+.sql-str { color: var(--syn-string); }
+.sql-num { color: var(--syn-number); }
+.sql-com { color: var(--syn-comment); }
+.sql-op { color: var(--syn-operator); }
+.sql-fault, .sql-warn { text-decoration-line: underline; text-decoration-style: wavy; text-underline-offset: 2px; }
+.sql-fault { text-decoration-color: var(--danger); }
+.sql-warn { text-decoration-color: var(--warn); }
+.sql-editor textarea { position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: transparent; caret-color: var(--readable); }
+.sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: transparent; }
+.sql-tip { position: fixed; z-index: 40; max-width: 320px; padding: 4px 8px; background: var(--panel); color: var(--readable); border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.28); font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; pointer-events: none; white-space: pre-wrap; }
+.sql-tip[hidden] { display: none; }
 .diagnostics, .banner { padding: 4px 8px; background: var(--panel); border-top: 1px solid var(--line); }
 .diagnostic { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
 .diagnostic.warn { color: var(--warn); }
@@ -131,7 +141,54 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .field input { border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); }
 .checks { display: flex; gap: 12px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-</style>"#;
+</style>
+<script>
+(function () {
+  var tip = null;
+  function ensureTip() {
+    if (tip) return tip;
+    tip = document.createElement("div");
+    tip.className = "sql-tip";
+    tip.hidden = true;
+    document.body.appendChild(tip);
+    return tip;
+  }
+  document.addEventListener("mousemove", function (event) {
+    var node = ensureTip();
+    var area = document.getElementById("sql-editor");
+    var back = document.getElementById("sql-highlight");
+    if (!area || !back || event.target !== area) {
+      node.hidden = true;
+      return;
+    }
+    var message = "";
+    var spans = back.querySelectorAll("[data-fault]");
+    for (var i = 0; i < spans.length && !message; i++) {
+      var boxes = spans[i].getClientRects();
+      for (var j = 0; j < boxes.length; j++) {
+        var box = boxes[j];
+        if (event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom) {
+          message = spans[i].getAttribute("data-fault") || "";
+          break;
+        }
+      }
+    }
+    if (!message) {
+      node.hidden = true;
+      return;
+    }
+    node.hidden = false;
+    node.textContent = message;
+    var width = Math.min(320, node.offsetWidth || 320);
+    var left = event.clientX + 12;
+    var top = event.clientY + 18;
+    if (left + width > window.innerWidth - 8) left = Math.max(8, event.clientX - width - 12);
+    if (top + node.offsetHeight > window.innerHeight - 8) top = Math.max(8, event.clientY - node.offsetHeight - 12);
+    node.style.left = left + "px";
+    node.style.top = top + "px";
+  });
+})();
+</script>"#;
 
 enum EditorAction {
     Run,
@@ -636,7 +693,7 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
         });
     });
     let sql = editor_text(window_id, &tab_id);
-    let pieces = highlight_sql(&sql);
+    let spans = logic::build_editor_spans(&sql, &editor_faults(window_id, &tab_id));
     let ends_with_newline = sql.ends_with('\n');
     use_effect(use_reactive(&sql, |_| {
         spawn(async move {
@@ -646,8 +703,8 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
     rsx! {
         div { class: "sql-editor",
             pre { id: "sql-highlight", aria_hidden: "true",
-                for piece in pieces {
-                    span { class: tone_class(piece.tone), "{piece.text}" }
+                for span in spans {
+                    EditorPaint { span }
                 }
                 if ends_with_newline {
                     br {}
@@ -686,6 +743,36 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
             }
         }
     }
+}
+
+#[component]
+fn EditorPaint(span: logic::EditorSpan) -> Element {
+    let class = editor_span_class(&span);
+    let text = span.text.clone();
+    if let Some(fault) = span.fault.clone() {
+        let message = fault.message;
+        rsx! { span { class: "{class}", "data-fault": "{message}", "{text}" } }
+    } else if class.is_empty() {
+        rsx! { span { "{text}" } }
+    } else {
+        rsx! { span { class: "{class}", "{text}" } }
+    }
+}
+
+fn editor_span_class(span: &logic::EditorSpan) -> String {
+    let mut names = Vec::new();
+    let tone = tone_class(span.tone);
+    if !tone.is_empty() {
+        names.push(tone);
+    }
+    if let Some(fault) = &span.fault {
+        names.push(if fault.severity == "error" {
+            "sql-fault"
+        } else {
+            "sql-warn"
+        });
+    }
+    names.join(" ")
 }
 
 fn tone_class(tone: SqlTone) -> &'static str {
@@ -1815,6 +1902,24 @@ if (node) {{
 }}"#
     ));
     let _ = eval.recv::<bool>().await;
+}
+
+fn editor_faults(window_id: u64, tab_id: &str) -> Vec<logic::SqlFault> {
+    runtime::lock()
+        .window(window_id)
+        .and_then(|gui| gui.tabs.iter().find(|tab| tab.id == tab_id))
+        .map(|tab| {
+            tab.diagnostics
+                .iter()
+                .map(|item| logic::SqlFault {
+                    from: item.from,
+                    to: item.to,
+                    severity: item.severity.clone(),
+                    message: item.message.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn editor_text(window_id: u64, tab_id: &str) -> String {

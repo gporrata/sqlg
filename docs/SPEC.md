@@ -28,7 +28,7 @@ Every tab shows a **connection badge** (a pill with the connection name, colored
 ## Tab layout
 Three columns per tab:
 1. **Schema tree** – schemas › tables › columns (with column types).
-2. **SQL editor** – a monospace textarea with no line-number gutter. Keywords, strings, numbers, comments, and operators are colored. A faulty range has a wavy underline, and hovering that range shows the diagnostic. A Run button sits in the toolbar.
+2. **SQL editor** – a monospace textarea with no line-number gutter and no syntax coloring, plus a Run button.
 3. **Results**.
 
 ### Layout ("chiclet") control
@@ -101,7 +101,7 @@ Segmented control at the top right of the toolbar:
 - Mockup: `main.png` / `dark.png`.
 
 ## Live checking (errors and typos while typing)
-Diagnostics are listed under the editor, up to eight at a time, with the line and a button for each quick fix. The same diagnostic is a wavy underline in the editor. Hovering the underline shows the message, such as a missing column or a syntax error. The editor does not draw gutter markers. Mockup: `lint.png` (`#lint` view).
+Diagnostics are listed under the editor, up to eight at a time, with the line and a button for each quick fix. The editor does not draw wavy underlines or gutter markers. Mockup: `lint.png` (`#lint` view).
 
 Three layers, all producing the same diagnostic format (`{from, to, severity, message, actions}`):
 1. **Syntax:** the `sqlparser` crate with the **MySQL dialect**, run in the app. It runs on every edit, debounced (~250 ms), and maps parser errors to the statement and position.
@@ -128,7 +128,7 @@ Three layers, all producing the same diagnostic format (`{from, to, severity, me
 - **Scope:** the theme applies to the **whole app**: every tab in every window.
 - **Persistence:** the choice is saved in `session.json` and restored on the next launch.
 - **Native chrome:** a dark theme uses the dark window theme, and a light theme uses the light window theme.
-- **Implementation:** CSS custom properties on the webview document. Keywords, strings, numbers, comments, and operators use high-contrast syntax colors, light on a dark theme and dark on a light theme. Plain editor text uses the same readable color as schema names.
+- **Implementation:** CSS custom properties on the webview document. Keywords, strings, numbers, comments, and operators use that theme's syntax colors.
 - There is no Auto / System theme.
 - Mockups: `main.png` (Light selected), `dark.png` (`#dark` view, Dark selected).
 

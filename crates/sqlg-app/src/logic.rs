@@ -1,4 +1,4 @@
-use sqlg_core::{LintCatalog, LintSchema, LintTable, SqlTone, highlight_sql};
+use sqlg_core::{LintCatalog, LintSchema, LintTable};
 use sqlg_mysql::SchemaSnapshot;
 
 pub const VISIBLE_ROWS: usize = 100;
@@ -57,119 +57,6 @@ pub fn schema_matches(snapshot: &SchemaSnapshot, query: &str) -> Vec<SchemaMatch
         }
     }
     matches
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SqlFault {
-    pub from: usize,
-    pub to: usize,
-    pub severity: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditorSpan {
-    pub text: String,
-    pub tone: SqlTone,
-    pub fault: Option<SqlFault>,
-}
-
-pub fn build_editor_spans(sql: &str, faults: &[SqlFault]) -> Vec<EditorSpan> {
-    let faults = normalize_faults(sql, faults);
-    let mut spans = Vec::new();
-    let mut cursor = 0usize;
-    for piece in highlight_sql(sql) {
-        let mut index = 0usize;
-        while index < piece.text.len() {
-            let at = cursor + index;
-            let fault = fault_covering(&faults, at);
-            let mut next = index + piece.text[index..].chars().next().map_or(1, char::len_utf8);
-            while next < piece.text.len() {
-                let covers = fault_covering(&faults, cursor + next);
-                if !same_fault(covers, fault) {
-                    break;
-                }
-                next += piece.text[next..].chars().next().map_or(1, char::len_utf8);
-            }
-            spans.push(EditorSpan {
-                text: piece.text[index..next].to_string(),
-                tone: piece.tone,
-                fault: fault.cloned(),
-            });
-            index = next;
-        }
-        cursor += piece.text.len();
-    }
-    spans
-}
-
-fn same_fault(left: Option<&SqlFault>, right: Option<&SqlFault>) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn fault_covering(faults: &[SqlFault], index: usize) -> Option<&SqlFault> {
-    let mut chosen: Option<&SqlFault> = None;
-    for fault in faults {
-        if index < fault.from || index >= fault.to {
-            continue;
-        }
-        chosen = match chosen {
-            Some(current) if current.severity == "error" && fault.severity != "error" => {
-                Some(current)
-            }
-            _ => Some(fault),
-        };
-    }
-    chosen
-}
-
-fn normalize_faults(sql: &str, faults: &[SqlFault]) -> Vec<SqlFault> {
-    faults
-        .iter()
-        .filter_map(|fault| {
-            let mut start = floor_boundary(sql, fault.from.min(sql.len()));
-            let mut end = ceil_boundary(sql, fault.to.min(sql.len()));
-            if end <= start {
-                if start < sql.len() {
-                    end = start + sql[start..].chars().next().map_or(0, char::len_utf8);
-                } else if let Some((index, ch)) = sql.char_indices().next_back() {
-                    start = index;
-                    end = index + ch.len_utf8();
-                } else {
-                    return None;
-                }
-            }
-            if start >= end {
-                return None;
-            }
-            Some(SqlFault {
-                from: start,
-                to: end,
-                severity: fault.severity.clone(),
-                message: fault.message.clone(),
-            })
-        })
-        .collect()
-}
-
-fn floor_boundary(sql: &str, index: usize) -> usize {
-    let mut at = index.min(sql.len());
-    while at > 0 && !sql.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
-}
-
-fn ceil_boundary(sql: &str, index: usize) -> usize {
-    let mut at = index.min(sql.len());
-    while at < sql.len() && !sql.is_char_boundary(at) {
-        at += 1;
-    }
-    at
 }
 
 pub fn schema_match_at(matches: &[SchemaMatch], index: usize) -> Option<&SchemaMatch> {
@@ -690,42 +577,6 @@ fn type_tone(type_name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn editor_spans_color_sql_and_mark_a_fault() {
-        let fault = SqlFault {
-            from: 7,
-            to: 11,
-            severity: "error".into(),
-            message: "no such column".into(),
-        };
-        let spans = build_editor_spans("select nope", &[fault]);
-        assert!(spans.iter().any(|span| {
-            span.tone == SqlTone::Keyword && span.text.eq_ignore_ascii_case("select")
-        }));
-        let marked = spans
-            .iter()
-            .find(|span| {
-                span.fault
-                    .as_ref()
-                    .is_some_and(|item| item.message == "no such column")
-            })
-            .expect("fault");
-        assert_eq!(marked.text, "nope");
-        let split = build_editor_spans(
-            "select",
-            &[SqlFault {
-                from: 2,
-                to: 6,
-                severity: "warning".into(),
-                message: "expecting where".into(),
-            }],
-        );
-        assert_eq!(split[0].text, "se");
-        assert!(split[0].fault.is_none());
-        assert_eq!(split[1].text, "lect");
-        assert_eq!(split[1].fault.as_ref().unwrap().message, "expecting where");
-    }
 
     #[test]
     fn title_uses_the_first_comment_and_skips_strings() {

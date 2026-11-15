@@ -65,16 +65,18 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .body.stack { flex-direction: column; }
 .schema, .editor-pane, .results { min-width: 0; min-height: 0; }
 .schema { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
-.schema .actions { padding: 6px; }
+.schema .actions { display: flex; flex-direction: column; align-items: flex-start; padding: 6px; }
+.schema .actions button { text-align: left; }
 .schema .find { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); color: var(--readable); }
 .tree { flex: 1; min-height: 0; overflow: auto; position: relative; color: var(--readable); }
-.tn { position: relative; display: flex; align-items: center; gap: 4px; width: calc(100% - 8px); box-sizing: border-box; height: 24px; margin: 0 4px; border-radius: 5px; white-space: nowrap; }
+.tn { position: relative; display: flex; align-items: center; gap: 4px; width: 100%; box-sizing: border-box; height: 24px; padding-right: 8px; white-space: nowrap; }
 .tn:hover { background: var(--chip); }
 .tn.hit { background: color-mix(in srgb, var(--accent) 32%, transparent); }
-.tn.schema .nm, .ic.schema { color: var(--readable); }
-.tn.table .nm, .ic.table { color: var(--accent); }
-.tn .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ty { flex: none; margin-left: auto; width: var(--type-ch, auto); white-space: nowrap; text-align: left; color: var(--tone-other); font: 10.5px Menlo, monospace; padding-right: 6px; }
+.tn.db .nm, .tn.db .ic { color: var(--readable); }
+.tn.table .nm, .tn.table .ic { color: var(--accent); }
+.tn.column .nm { color: var(--readable); }
+.nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ty { flex: 0 0 8.5em; width: 8.5em; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .tone-num { color: var(--tone-num); }
 .tone-text { color: var(--tone-text); }
 .tone-time { color: var(--tone-time); }
@@ -83,10 +85,12 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .cw { width: 14px; height: 14px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .chev { transition: transform 120ms ease; }
 .chev.open { transform: rotate(90deg); }
-.ic { flex: none; color: var(--muted); }
-.ic.gold { color: #b8860b; }
-.ic.purple { color: #7a4ea3; }
-.gl { width: 14px; flex: none; text-align: center; font: 700 11px Menlo, monospace; }
+.ic { width: 14px; height: 14px; flex: none; color: var(--readable); }
+.ic.gold { color: #9a6b00; }
+.shell.dark .ic.gold { color: #f0c14a; }
+.ic.purple { color: #6b3f99; }
+.shell.dark .ic.purple { color: #d7b3f5; }
+.gl { width: 14px; flex: none; text-align: center; font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ig { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); pointer-events: none; }
 .sash { flex: 0 0 6px; background: var(--line); cursor: col-resize; }
 .sash.row { cursor: row-resize; }
@@ -225,7 +229,9 @@ fn Toolbar(window_id: u64, view: ShellView) -> Element {
         div { class: "toolbar",
             div { class: "tabs",
                 for tab in view.tabs.clone() {
-                    TabChip { window_id, tab }
+                    if !(tab.label == "New query" && view.tabs.len() == 1) {
+                        TabChip { window_id, tab }
+                    }
                 }
             }
             select {
@@ -331,18 +337,6 @@ fn TabChip(window_id: u64, tab: TabChipView) -> Element {
 #[component]
 fn SchemaPane(window_id: u64, view: ShellView) -> Element {
     let width = view.schema_width;
-    let type_chars = view
-        .schema
-        .iter()
-        .filter_map(|node| node.type_label.as_deref())
-        .map(|label| label.chars().count())
-        .max()
-        .unwrap_or(0);
-    let tree_style = if type_chars == 0 {
-        String::new()
-    } else {
-        format!("--type-ch: {type_chars}ch")
-    };
     let hit = view.schema_hit.clone();
     use_effect(use_reactive(&hit, |hit| {
         if hit.is_empty() {
@@ -366,9 +360,9 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
             if let Some(message) = view.schema_message.clone() {
                 p { class: "muted", "{message}" }
             }
-            div { class: "tree", style: "{tree_style}",
+            div { class: "tree",
                 for node in view.schema.clone() {
-                    SchemaNode { window_id, tab_id: view.tab_id.clone(), node }
+                    SchemaNode { key: "{node.key}", window_id, tab_id: view.tab_id.clone(), node }
                 }
             }
         }
@@ -422,16 +416,16 @@ fn SchemaSearch(window_id: u64) -> Element {
 
 #[component]
 fn SchemaNode(window_id: u64, tab_id: Option<String>, node: SchemaNodeView) -> Element {
-    let key = node.key.clone();
+    let expand_key = node.key.clone();
     let ident = node.ident.clone();
     let depth = node.depth;
     let pad = 8 + u32::from(depth) * 14;
-    let guide = 10 + (i32::from(depth) - 1) * 14;
     let expandable = node.expandable;
     let open = node.open;
     let mark = node.mark;
     let tone = node.tone.clone();
     let type_label = node.type_label.clone();
+    let label = node.label.clone();
     let row_class = if node.hit {
         format!("tn {} hit", node.kind)
     } else {
@@ -441,15 +435,16 @@ fn SchemaNode(window_id: u64, tab_id: Option<String>, node: SchemaNodeView) -> E
         div {
             class: "{row_class}",
             style: "padding-left: {pad}px",
+            title: "{label}",
             onclick: {
-                let key = key.clone();
+                let expand_key = expand_key.clone();
                 move |_| {
                     if !expandable {
                         return;
                     }
                     runtime::apply(Message::ToggleExpand {
                         window: window_id,
-                        key: key.clone(),
+                        key: expand_key.clone(),
                     })
                 }
             },
@@ -470,8 +465,8 @@ fn SchemaNode(window_id: u64, tab_id: Option<String>, node: SchemaNodeView) -> E
                     });
                 }
             },
-            if depth > 0 {
-                i { class: "ig", style: "left: {guide}px" }
+            for level in 1..=depth {
+                i { class: "ig", style: "left: {10 + (u32::from(level) - 1) * 14}px" }
             }
             span {
                 class: "cw",
@@ -485,9 +480,9 @@ fn SchemaNode(window_id: u64, tab_id: Option<String>, node: SchemaNodeView) -> E
                 }
             }
             {kind_mark(mark)}
-            span { class: "nm", "{node.label}" }
+            span { class: "nm", "{label}" }
             if let Some(type_label) = type_label {
-                span { class: "ty tone-{tone}", "{type_label}" }
+                span { class: "ty tone-{tone}", title: "{type_label}", "{type_label}" }
             }
         }
     }
@@ -516,7 +511,7 @@ fn kind_mark(mark: NodeMark) -> Element {
     match mark {
         NodeMark::Group => rsx! {
             svg {
-                class: "ic schema",
+                class: "ic db",
                 width: "14",
                 height: "14",
                 view_box: "0 0 16 16",
@@ -1379,7 +1374,7 @@ fn schema_nodes(
             mark: NodeMark::Group,
             type_label: None,
             tone: String::new(),
-            kind: "schema",
+            kind: "db",
             hit: schema_key == hit_key,
         });
         if !schema_open {

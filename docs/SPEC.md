@@ -20,7 +20,7 @@ Every tab shows a **connection badge** (a pill with the connection name, colored
    - Truncate to about 30 characters with `…`. The full comment is shown in a tooltip.
    - Comment markers inside string literals don't count (use the editor's SQL syntax tree). MySQL `/*! … */` version comments are ignored.
 2. **No comment:** the tab does not show the query text. The tooltip still shows the first statement, with whitespace collapsed.
-3. **Empty editor:** a muted `New query` placeholder.
+3. **Empty editor:** no tab button. A comment still names the tab.
 - Titles update live as the editor changes, debounced (about 300 ms). Running a query doesn't change the title.
 - Users can't edit titles directly. To control a tab's name, add or change its first comment.
 - *Suggestion:* make the badge color a per-connection setting in the Connections dialog, with red the default for names like `prod`.

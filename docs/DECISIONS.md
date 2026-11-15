@@ -12,7 +12,7 @@ Choices made where the spec left room, or where the environment differed from th
 - With a selection, ⌘S is Save Selection As: it always shows a dialog and never relinks the tab. ⇧⌘↵ runs the statement under the cursor.
 - Execution stops at the first failed statement. The footer stays a neutral count.
 - New files are UTF-8 with LF. An existing UTF-8 BOM and CRLF line endings are preserved. Other encodings are rejected.
-- The window title is `sqlg — {tab label}` when the tab has a label, and `sqlg` when it does not. A tab label is its first comment. The query text is not shown beside the connection selector. An empty editor says `New query`. The tab tooltip includes the full title, or the first statement when there is no comment, and the linked path. There is no proxy icon.
+- The window title is `sqlg — {tab label}` when the tab has a label, and `sqlg` when it does not. A tab label is its first comment. The query text is not shown beside the connection selector. An empty editor does not show a tab button. The tab tooltip includes the full title, or the first statement when there is no comment, and the linked path. There is no proxy icon.
 - The footer theme selector lists the common editor themes, including Gruvbox, Ayu, and One Dark Pro. Their workbench colors are the Visual Studio Code colors for those themes. Schema names and editor text use `#f4f4f5` on a dark theme and `#1c1c1e` on a light theme. The theme literal stays the original hex. A dark theme sets the native window theme to dark. There is no Auto mode.
 - Connections may set `explain_lint` (default false, including names that look like prod) and an optional badge `color`.
 - Warnings are: `UPDATE`/`DELETE` without `WHERE`, `SELECT *`, `LIMIT` without `ORDER BY`, and `= NULL`.

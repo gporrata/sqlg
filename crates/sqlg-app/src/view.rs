@@ -114,7 +114,7 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .section { margin: 8px; }
 .grid { border-collapse: collapse; font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; position: relative; }
-.grid th { background: var(--chip); }
+.grid th { background: var(--chip); color: var(--readable); }
 .grid .tone-num { color: var(--syn-number); }
 .grid .tone-text { color: var(--syn-string); }
 .grid .tone-time { color: var(--syn-keyword); }
@@ -857,7 +857,7 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                     thead {
                         tr {
                             for column in section.columns.clone() {
-                                th { class: "tone-{column.tone}", style: "width: {column.width}px; min-width: {column.width}px",
+                                th { style: "width: {column.width}px; min-width: {column.width}px",
                                     "{column.name}"
                                     span {
                                         class: "col-sash",

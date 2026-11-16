@@ -137,6 +137,7 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .cell-view .j-null { color: var(--muted); font-style: italic; }
 .cell-view .j-obj, .cell-view .j-arr { color: var(--muted); }
 .cell-view pre { margin: 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--syn-string); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cell-view pre.hex { flex: 1; min-height: 160px; overflow: auto; white-space: pre; color: var(--readable); }
 .col-sash { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
 .placeholder, .muted { color: var(--muted); padding: 8px; }
 .footer .summary { flex: 1; text-align: center; color: var(--muted); }
@@ -894,7 +895,12 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                                         class: "{cell_class(&cell)}",
                                         title: "{cell_title(&cell)}",
                                         onclick: {
-                                            let text = cell.text.clone();
+                                            let text = if cell.uuid {
+                                                logic::uuid_text(&cell.text)
+                                                    .unwrap_or_else(|| cell.text.clone())
+                                            } else {
+                                                cell.text.clone()
+                                            };
                                             let json = cell.json;
                                             move |_| {
                                                 if !json {
@@ -957,7 +963,7 @@ fn cell_opens(cell: &CellView) -> bool {
     if cell.null {
         return false;
     }
-    if cell.json {
+    if cell.json || cell.binary {
         return true;
     }
     cell.long_text && cell.text.chars().count() > logic::LONG_TEXT_LIMIT
@@ -969,6 +975,8 @@ fn cell_title(cell: &CellView) -> String {
     }
     if cell.json {
         "Show JSON".into()
+    } else if cell.binary {
+        "Show hex".into()
     } else {
         "Show text".into()
     }
@@ -980,6 +988,12 @@ fn cell_label(cell: &CellView) -> String {
     }
     if cell.json {
         return logic::json_button_label(&cell.text);
+    }
+    if cell.uuid {
+        return logic::uuid_text(&cell.text).unwrap_or_else(|| cell.text.clone());
+    }
+    if cell.binary {
+        return logic::hex_preview(&cell.text);
     }
     if cell.long_text && cell.text.chars().count() > logic::LONG_TEXT_LIMIT {
         return logic::preview_label(&cell.text, logic::LONG_TEXT_LIMIT);
@@ -1110,6 +1124,9 @@ fn CellPreviewPane(window_id: u64, tab_id: Option<String>, preview: CellPreviewV
                 },
                 PreviewBody::Text(text) => rsx! {
                     pre { "{text}" }
+                },
+                PreviewBody::Hex(text) => rsx! {
+                    pre { class: "hex", "{text}" }
                 },
             }
         }
@@ -1347,6 +1364,7 @@ struct ColumnView {
     tone: String,
     json: bool,
     long_text: bool,
+    type_name: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1357,6 +1375,8 @@ struct CellView {
     tone: String,
     json: bool,
     long_text: bool,
+    binary: bool,
+    uuid: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1373,6 +1393,7 @@ enum PreviewBody {
     Json(Vec<logic::JsonRow>),
     Raw(String),
     Text(String),
+    Hex(String),
 }
 
 #[derive(Clone, PartialEq)]
@@ -1726,6 +1747,7 @@ fn column_view(
         tone: logic::column_tone(&column.type_name, "").into(),
         json: logic::is_json_column(&column.type_name),
         long_text: logic::is_long_text_column(&column.type_name),
+        type_name: column.type_name.clone(),
     }
 }
 
@@ -1736,14 +1758,20 @@ fn displayed_cell(column: Option<&ColumnView>, value: &Option<String>) -> CellVi
         .unwrap_or_else(|| "other".into());
     let json = column.is_some_and(|column| column.json);
     let long_text = column.is_some_and(|column| column.long_text);
+    let type_name = column.map(|column| column.type_name.as_str()).unwrap_or("");
+    let binary = logic::is_binary_column(type_name);
     match value {
         Some(text) => CellView {
+            uuid: binary
+                && logic::is_fixed_binary_column(type_name)
+                && logic::uuid_text(text).is_some(),
             text: text.clone(),
             null: false,
             numeric,
             tone,
             json,
             long_text,
+            binary,
         },
         None => CellView {
             text: "null".into(),
@@ -1752,6 +1780,8 @@ fn displayed_cell(column: Option<&ColumnView>, value: &Option<String>) -> CellVi
             tone,
             json: false,
             long_text: false,
+            binary: false,
+            uuid: false,
         },
     }
 }
@@ -1779,6 +1809,8 @@ fn cell_preview_view(
                 cell.json = false;
                 cell.long_text = false;
                 cell.numeric = false;
+                cell.binary = false;
+                cell.uuid = false;
             }
             cell
         })
@@ -1794,6 +1826,7 @@ fn cell_preview_view(
             None => PreviewBody::Raw(text),
         },
         CellKind::Text => PreviewBody::Text(text),
+        CellKind::Hex => PreviewBody::Hex(logic::hex_dump(&text)),
     };
     Some(CellPreviewView {
         pinned: deck.pinned,

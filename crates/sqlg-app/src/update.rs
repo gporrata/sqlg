@@ -585,7 +585,7 @@ fn start_run(app: &mut App, window: u64, tab_id: &str, statement: bool) -> Vec<E
                     RunPrep::Empty
                 }
             } else {
-                tab.prepare_run();
+                tab.prepare_run(&sql);
                 RunPrep::Ready { sql, name }
             }
         } else {

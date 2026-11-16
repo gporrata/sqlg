@@ -3,6 +3,11 @@ use std::collections::HashSet;
 use serde_json::Value;
 use sqlg_core::{LintCatalog, LintSchema, LintTable};
 use sqlg_mysql::SchemaSnapshot;
+use sqlparser::ast::{
+    Expr, ObjectName, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+};
+use sqlparser::dialect::MySqlDialect;
+use sqlparser::parser::Parser;
 
 pub const VISIBLE_ROWS: usize = 100;
 pub const COLUMN_MIN: f64 = 72.0;
@@ -168,6 +173,293 @@ pub fn collapse(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub const RESULT_LABEL_LIMIT: usize = 20;
+
+pub fn result_deck_label(sql: &str) -> String {
+    let chars: Vec<char> = sql.chars().collect();
+    let start = find_from_keyword(&chars).unwrap_or(0);
+    let excerpt = excerpt_until_semicolon(&chars, start);
+    let collapsed = collapse(&excerpt);
+    let mut label: String = collapsed.chars().take(RESULT_LABEL_LIMIT).collect();
+    let end = label.trim_end().len();
+    label.truncate(end);
+    if collapsed.chars().count() > RESULT_LABEL_LIMIT {
+        label.push_str("...");
+    }
+    label
+}
+
+pub fn text_cell_label(sql: &str, column_name: &str, column_index: usize) -> String {
+    label_from_query(sql, column_name, column_index).unwrap_or_else(|| column_name.to_string())
+}
+
+fn label_from_query(sql: &str, column_name: &str, column_index: usize) -> Option<String> {
+    let dialect = MySqlDialect {};
+    let statements = Parser::parse_sql(&dialect, sql).ok()?;
+    let query = statements.iter().find_map(|statement| match statement {
+        Statement::Query(query) => Some(query.as_ref()),
+        _ => None,
+    })?;
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    let relations = relation_names(select);
+    if !select.projection.iter().any(select_item_is_wildcard) {
+        if let Some(item) = select.projection.get(column_index) {
+            if let Some(label) = label_select_item(item, &relations) {
+                return Some(label);
+            }
+        }
+    }
+    if let Some(label) = select.projection.iter().find_map(|item| {
+        let name = select_item_result_name(item)?;
+        if name.eq_ignore_ascii_case(column_name) {
+            label_select_item(item, &relations)
+        } else {
+            None
+        }
+    }) {
+        return Some(label);
+    }
+    label_from_wildcard(select, &relations, column_name)
+}
+
+fn relation_names(select: &Select) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_relations(&select.from, &mut names);
+    names
+}
+
+fn collect_relations(tables: &[TableWithJoins], names: &mut Vec<String>) {
+    for table in tables {
+        collect_factor(&table.relation, names);
+        for join in &table.joins {
+            collect_factor(&join.relation, names);
+        }
+    }
+}
+
+fn collect_factor(factor: &TableFactor, names: &mut Vec<String>) {
+    match factor {
+        TableFactor::Table { name, alias, .. } => {
+            if let Some(qualifier) = alias
+                .as_ref()
+                .map(|alias| alias.name.value.clone())
+                .or_else(|| last_object_ident(name))
+            {
+                names.push(qualifier);
+            }
+        }
+        TableFactor::Derived { alias, .. } => {
+            if let Some(alias) = alias {
+                names.push(alias.name.value.clone());
+            }
+        }
+        TableFactor::NestedJoin {
+            table_with_joins,
+            alias,
+        } => {
+            if let Some(alias) = alias {
+                names.push(alias.name.value.clone());
+            } else {
+                collect_relations(std::slice::from_ref(table_with_joins), names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn last_object_ident(name: &ObjectName) -> Option<String> {
+    name.0
+        .iter()
+        .rev()
+        .find_map(|part| part.as_ident().map(|ident| ident.value.clone()))
+}
+
+fn select_item_is_wildcard(item: &SelectItem) -> bool {
+    matches!(
+        item,
+        SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _)
+    )
+}
+
+fn label_select_item(item: &SelectItem, relations: &[String]) -> Option<String> {
+    let (expr, result_name) = match item {
+        SelectItem::UnnamedExpr(expr) => (expr, None),
+        SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.as_str())),
+        _ => return None,
+    };
+    let Some(source) = plain_column(expr) else {
+        return single_relation_label(relations, result_name?);
+    };
+    if let Some(qualifier) = source.qualifier {
+        return Some(format!("{qualifier}.{}", source.column));
+    }
+    single_relation_label(relations, &source.column)
+}
+
+struct PlainColumn<'a> {
+    qualifier: Option<&'a str>,
+    column: &'a str,
+}
+
+fn plain_column(expr: &Expr) -> Option<PlainColumn<'_>> {
+    match expr {
+        Expr::Identifier(ident) => Some(PlainColumn {
+            qualifier: None,
+            column: &ident.value,
+        }),
+        Expr::CompoundIdentifier(parts) if parts.len() >= 2 => {
+            let column = &parts[parts.len() - 1].value;
+            let qualifier = &parts[parts.len() - 2].value;
+            if qualifier.is_empty() || column.is_empty() {
+                None
+            } else {
+                Some(PlainColumn {
+                    qualifier: Some(qualifier),
+                    column,
+                })
+            }
+        }
+        _ => None,
+    }
+}
+
+fn single_relation_label(relations: &[String], column: &str) -> Option<String> {
+    if relations.len() == 1 && !column.is_empty() {
+        Some(format!("{}.{column}", relations[0]))
+    } else {
+        None
+    }
+}
+
+fn select_item_result_name(item: &SelectItem) -> Option<&str> {
+    match item {
+        SelectItem::ExprWithAlias { alias, .. } => Some(&alias.value),
+        SelectItem::UnnamedExpr(Expr::Identifier(ident)) => Some(&ident.value),
+        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts)) => {
+            parts.last().map(|ident| ident.value.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn label_from_wildcard(select: &Select, relations: &[String], column_name: &str) -> Option<String> {
+    if column_name.is_empty() {
+        return None;
+    }
+    let mut qualifiers = Vec::new();
+    for item in &select.projection {
+        match item {
+            SelectItem::Wildcard(_) => qualifiers.push(None),
+            SelectItem::QualifiedWildcard(
+                sqlparser::ast::SelectItemQualifiedWildcardKind::ObjectName(name),
+                _,
+            ) => qualifiers.push(last_object_ident(name)),
+            _ => {}
+        }
+    }
+    if qualifiers.len() != 1 {
+        return None;
+    }
+    match qualifiers.pop() {
+        Some(Some(name)) if !name.is_empty() => Some(format!("{name}.{column_name}")),
+        Some(None) => single_relation_label(relations, column_name),
+        _ => None,
+    }
+}
+
+fn find_from_keyword(chars: &[char]) -> Option<usize> {
+    let mut index = 0;
+    while index < chars.len() {
+        if let Some(next) = skip_non_code(chars, index) {
+            index = next;
+            continue;
+        }
+        if is_from_keyword(chars, index) {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn is_from_keyword(chars: &[char], index: usize) -> bool {
+    let word = ['f', 'r', 'o', 'm'];
+    if index + word.len() > chars.len() {
+        return false;
+    }
+    if !chars[index..index + word.len()]
+        .iter()
+        .zip(word)
+        .all(|(ch, expected)| ch.eq_ignore_ascii_case(&expected))
+    {
+        return false;
+    }
+    if index > 0 && identifier_continues(chars[index - 1]) {
+        return false;
+    }
+    chars
+        .get(index + word.len())
+        .is_none_or(|ch| !identifier_continues(*ch))
+}
+
+fn identifier_continues(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == '.'
+}
+
+fn skip_non_code(chars: &[char], index: usize) -> Option<usize> {
+    let ch = chars[index];
+    let next = chars.get(index + 1).copied();
+    if ch == '\'' || ch == '"' || ch == '`' {
+        return Some(skip_quote(chars, index, ch));
+    }
+    if ch == '#' || (ch == '-' && next == Some('-') && is_line_comment(chars, index + 2)) {
+        return Some(skip_to_line_end(chars, index));
+    }
+    if ch == '/' && next == Some('*') {
+        return Some(find_block_end(chars, index + 2));
+    }
+    None
+}
+
+fn skip_to_line_end(chars: &[char], index: usize) -> usize {
+    chars[index..]
+        .iter()
+        .position(|item| *item == '\n')
+        .map(|pos| index + pos + 1)
+        .unwrap_or(chars.len())
+}
+
+fn excerpt_until_semicolon(chars: &[char], start: usize) -> String {
+    let mut excerpt = String::new();
+    let mut index = start;
+    while index < chars.len() {
+        let ch = chars[index];
+        let next = chars.get(index + 1).copied();
+        if ch == '\'' || ch == '"' || ch == '`' {
+            let end = skip_quote(chars, index, ch);
+            excerpt.extend(chars[index..end].iter());
+            index = end;
+            continue;
+        }
+        if ch == '#' || (ch == '-' && next == Some('-') && is_line_comment(chars, index + 2)) {
+            index = skip_to_line_end(chars, index);
+            continue;
+        }
+        if ch == '/' && next == Some('*') {
+            index = find_block_end(chars, index + 2);
+            continue;
+        }
+        if ch == ';' {
+            break;
+        }
+        excerpt.push(ch);
+        index += 1;
+    }
+    excerpt
+}
+
 pub fn execution_summary(total: usize, executed: usize, failed: usize) -> String {
     if total == 0 {
         return "Nothing to run".into();
@@ -278,9 +570,117 @@ const JSON_TREE_DEPTH: u8 = 32;
 
 pub const JSON_LABEL_LIMIT: usize = 10;
 pub const LONG_TEXT_LIMIT: usize = 50;
+pub const HEX_PREVIEW_BYTES: usize = 20;
 
 pub fn is_json_column(type_name: &str) -> bool {
     type_name.eq_ignore_ascii_case("json")
+}
+
+pub fn is_json_text(text: &str) -> bool {
+    serde_json::from_str::<Value>(text).is_ok()
+}
+
+pub fn is_binary_column(type_name: &str) -> bool {
+    sqlg_mysql::is_binary_type(type_name)
+}
+
+pub fn is_fixed_binary_column(type_name: &str) -> bool {
+    sqlg_mysql::is_fixed_binary_type(type_name)
+}
+
+pub fn binary_label(type_name: &str, hex_text: &str) -> String {
+    if is_fixed_binary_column(type_name)
+        && let Some(uuid) = uuid_text(hex_text)
+    {
+        return uuid;
+    }
+    hex_preview(hex_text)
+}
+
+pub fn uuid_text(hex_text: &str) -> Option<String> {
+    let hex = hex_text.trim();
+    if hex.len() != 32 || decode_hex(hex).is_none() {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
+pub fn hex_preview(hex_text: &str) -> String {
+    let hex = hex_text.trim();
+    let limit = HEX_PREVIEW_BYTES * 2;
+    if hex.len() <= limit {
+        return hex.to_string();
+    }
+    let mut label: String = hex.chars().take(limit).collect();
+    label.push_str("...");
+    label
+}
+
+pub fn hex_dump(hex_text: &str) -> String {
+    let Some(bytes) = decode_hex(hex_text.trim()) else {
+        return String::new();
+    };
+    const ROW_BYTES: usize = 16;
+    const WORD_WIDTH: usize = ROW_BYTES * 2 + ROW_BYTES;
+    let mut lines = Vec::new();
+    for (row, chunk) in bytes.chunks(ROW_BYTES).enumerate() {
+        let offset = format!("{:08x}", row * ROW_BYTES);
+        let mut words = String::new();
+        for (index, byte) in chunk.iter().enumerate() {
+            if index > 0 {
+                words.push(' ');
+                if index == 8 {
+                    words.push(' ');
+                }
+            }
+            words.push_str(&format!("{byte:02x}"));
+        }
+        while words.len() < WORD_WIDTH {
+            words.push(' ');
+        }
+        let mut ascii = String::new();
+        for byte in chunk {
+            if (0x20..0x7f).contains(byte) {
+                ascii.push(*byte as char);
+            } else {
+                ascii.push('.');
+            }
+        }
+        lines.push(format!("{offset}  {words}  |{ascii}|"));
+    }
+    lines.join("\n")
+}
+
+fn decode_hex(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 2 != 0 {
+        return None;
+    }
+    let digits = text.as_bytes();
+    let mut bytes = Vec::with_capacity(text.len() / 2);
+    let mut index = 0;
+    while index < digits.len() {
+        let hi = hex_value(digits[index])?;
+        let lo = hex_value(digits[index + 1])?;
+        bytes.push((hi << 4) | lo);
+        index += 2;
+    }
+    Some(bytes)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub fn is_long_text_column(type_name: &str) -> bool {
@@ -784,12 +1184,140 @@ mod tests {
     }
 
     #[test]
+    fn json_text_requires_the_whole_value() {
+        assert!(is_json_text(r#"{"a":1}"#));
+        assert!(is_json_text("\n[1, 2]\n"));
+        assert!(!is_json_text(r#"{"a":1} trailing"#));
+        assert!(!is_json_text(r#"{"a":1}{"b":2}"#));
+        assert!(!is_json_text(r#"{"a":1"#));
+        assert!(!is_json_text("not json"));
+        assert!(!is_json_text(""));
+    }
+
+    #[test]
+    fn binary_columns_show_a_uuid_or_a_short_hex_value() {
+        let uuid = "550e8400e29b41d4a716446655440000";
+        assert!(is_binary_column("BINARY"));
+        assert!(is_binary_column("binary(16)"));
+        assert!(is_binary_column("VARBINARY"));
+        assert!(is_binary_column("mediumblob"));
+        assert!(!is_binary_column("VARCHAR"));
+        assert!(is_fixed_binary_column("BINARY"));
+        assert!(!is_fixed_binary_column("VARBINARY"));
+        assert_eq!(
+            binary_label("BINARY", uuid),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(
+            binary_label("binary(16)", uuid),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(binary_label("VARBINARY", uuid), uuid);
+        assert_eq!(binary_label("BLOB", uuid), uuid);
+        let twenty = "ab".repeat(HEX_PREVIEW_BYTES);
+        let longer = format!("{twenty}cd");
+        assert_eq!(binary_label("BLOB", &twenty), twenty);
+        assert_eq!(binary_label("LONGBLOB", &longer), format!("{twenty}..."));
+        assert_eq!(
+            binary_label("BINARY", &"cd".repeat(32)),
+            format!("{}...", "cd".repeat(HEX_PREVIEW_BYTES))
+        );
+        assert_eq!(hex_dump("00"), format!("00000000  {:<48}  |.|", "00"));
+        assert_eq!(
+            hex_dump(&"61".repeat(16)),
+            "00000000  61 61 61 61 61 61 61 61  61 61 61 61 61 61 61 61  |aaaaaaaaaaaaaaaa|"
+        );
+        assert_eq!(
+            hex_dump(&format!("{}21", "61".repeat(16))),
+            "00000000  61 61 61 61 61 61 61 61  61 61 61 61 61 61 61 61  |aaaaaaaaaaaaaaaa|\n00000010  21                                                |!|"
+        );
+        assert_eq!(hex_dump("zz"), "");
+        assert_eq!(hex_dump(""), "");
+    }
+
+    #[test]
     fn result_column_types_use_distinct_tones() {
         assert_eq!(column_tone("BIGINT", ""), "num");
         assert_eq!(column_tone("VARCHAR", ""), "text");
         assert_eq!(column_tone("DATETIME", ""), "time");
         assert_eq!(column_tone("ENUM", ""), "enum");
         assert_eq!(column_tone("GEOMETRY", ""), "other");
+    }
+
+    #[test]
+    fn result_deck_label_starts_at_from() {
+        assert_eq!(
+            result_deck_label("select id, name\nfrom customer_orders\nwhere active = 1"),
+            "from customer_orders..."
+        );
+        assert_eq!(
+            result_deck_label("select 'from hidden' from trips where id = 1"),
+            "from trips where id..."
+        );
+        assert_eq!(
+            result_deck_label("select from_date from trips"),
+            "from trips"
+        );
+        assert_eq!(
+            result_deck_label("select * -- from fake\nfrom real_table"),
+            "from real_table"
+        );
+        assert_eq!(
+            result_deck_label("select /* from fake */ * from trips"),
+            "from trips"
+        );
+        assert_eq!(result_deck_label("select from_date"), "select from_date");
+        assert_eq!(result_deck_label("show tables"), "show tables");
+        assert_eq!(
+            result_deck_label("delete from trips where id = 1"),
+            "from trips where id..."
+        );
+        assert_eq!(
+            result_deck_label("select 1; select * from trips where id = 1"),
+            "from trips where id..."
+        );
+        assert_eq!(result_deck_label("   "), "");
+    }
+
+    #[test]
+    fn text_cell_label_uses_the_table_or_alias() {
+        assert_eq!(
+            text_cell_label("select data from TRIP_DATA", "data", 0),
+            "TRIP_DATA.data"
+        );
+        assert_eq!(
+            text_cell_label("select td.data from TRIP_DATA td", "data", 0),
+            "td.data"
+        );
+        assert_eq!(
+            text_cell_label("select data from TRIP_DATA td", "data", 0),
+            "td.data"
+        );
+        assert_eq!(
+            text_cell_label("select book.TRIP_DATA.data from book.TRIP_DATA", "data", 0),
+            "TRIP_DATA.data"
+        );
+        assert_eq!(
+            text_cell_label("select td.data as payload from TRIP_DATA td", "payload", 0),
+            "td.data"
+        );
+        assert_eq!(
+            text_cell_label("select * from TRIP_DATA td", "data", 3),
+            "td.data"
+        );
+        assert_eq!(
+            text_cell_label(
+                "select td.* from TRIP_DATA td join NOTE n on n.id = td.id",
+                "data",
+                2
+            ),
+            "td.data"
+        );
+        assert_eq!(
+            text_cell_label("select data from TRIP_DATA, NOTE", "data", 0),
+            "data"
+        );
+        assert_eq!(text_cell_label("select body", "body", 0), "body");
     }
 
     #[test]

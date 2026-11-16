@@ -130,6 +130,7 @@ pub struct CellPreview {
 pub enum CellKind {
     Json,
     Text,
+    Hex,
 }
 
 #[derive(Clone, Debug)]
@@ -607,7 +608,7 @@ impl Tab {
     }
 
     pub fn open_cell(&mut self, section: usize, row: usize, column: usize) -> bool {
-        let preview = {
+        let (preview, sql) = {
             let Some(deck) = self.current_deck() else {
                 return false;
             };
@@ -623,24 +624,32 @@ impl Tab {
             let Some(text) = values.get(column).and_then(|value| value.as_deref()) else {
                 return false;
             };
-            let kind = if logic::is_json_column(&info.type_name) {
-                CellKind::Json
-            } else if logic::is_long_text_column(&info.type_name)
-                && text.chars().count() > logic::LONG_TEXT_LIMIT
+            let long_text = logic::is_long_text_column(&info.type_name)
+                && text.chars().count() > logic::LONG_TEXT_LIMIT;
+            let kind = if logic::is_json_column(&info.type_name)
+                || (long_text && logic::is_json_text(text))
             {
+                CellKind::Json
+            } else if logic::is_binary_column(&info.type_name) {
+                CellKind::Hex
+            } else if long_text {
                 CellKind::Text
             } else {
                 return false;
             };
-            CellPreview {
-                kind,
-                columns: section.columns.clone(),
-                values,
-                column,
-                open: HashSet::new(),
-            }
+            let sql = section.sql.clone();
+            (
+                CellPreview {
+                    kind,
+                    columns: section.columns.clone(),
+                    values,
+                    column,
+                    open: HashSet::new(),
+                },
+                sql,
+            )
         };
-        self.show_cell_preview(preview);
+        self.show_cell_preview(preview, &sql);
         true
     }
 
@@ -656,11 +665,7 @@ impl Tab {
         }
     }
 
-    fn show_cell_preview(&mut self, preview: CellPreview) {
-        let title = match preview.kind {
-            CellKind::Json => "JSON",
-            CellKind::Text => "Text",
-        };
+    fn show_cell_preview(&mut self, preview: CellPreview, sql: &str) {
         let index = if let Some(index) = self
             .decks
             .iter()
@@ -671,12 +676,21 @@ impl Tab {
             self.push_deck()
         };
         let id = self.decks[index].id;
+        let column = preview.columns.get(preview.column);
+        let column_name = column.map(|column| column.name.as_str()).unwrap_or("");
+        let type_name = column.map(|column| column.type_name.as_str()).unwrap_or("");
+        let label = match preview.kind {
+            CellKind::Json if logic::is_json_column(type_name) => format!("JSON {id}"),
+            CellKind::Json | CellKind::Text | CellKind::Hex => {
+                logic::text_cell_label(sql, column_name, preview.column)
+            }
+        };
         let deck = &mut self.decks[index];
         deck.preview = Some(preview);
         deck.results.clear();
         deck.show_rows = logic::VISIBLE_ROWS;
         deck.footer.clear();
-        deck.label = format!("{title} {id}");
+        deck.label = label;
         self.active_deck = index;
     }
 
@@ -689,7 +703,7 @@ impl Tab {
             .unwrap_or_else(|| self.decks.len().saturating_sub(1));
     }
 
-    pub fn prepare_run(&mut self) {
+    pub fn prepare_run(&mut self, sql: &str) {
         self.close_unpinned_previews();
         let index = if self.decks.is_empty() {
             self.push_deck()
@@ -705,7 +719,7 @@ impl Tab {
         let deck = &mut self.decks[index];
         deck.results.clear();
         deck.preview = None;
-        deck.label = format!("Result {}", deck.id);
+        deck.label = logic::result_deck_label(sql);
         deck.show_rows = logic::VISIBLE_ROWS;
         deck.footer = "Running…".into();
         self.run_deck = deck.id;
@@ -1217,19 +1231,19 @@ mod tests {
     #[test]
     fn pinned_result_opens_another_and_unpin_removes_it() {
         let mut tab = Tab::fresh();
-        tab.prepare_run();
+        tab.prepare_run("select id from customer_orders where active = 1");
         assert_eq!(tab.decks.len(), 1);
-        assert_eq!(tab.decks[0].label, "Result 1");
+        assert_eq!(tab.decks[0].label, "from customer_orders...");
         tab.pin_deck(0);
-        tab.prepare_run();
+        tab.prepare_run("");
         assert_eq!(tab.decks.len(), 2);
         assert!(tab.decks[0].pinned);
         assert!(!tab.decks[1].pinned);
         assert_eq!(tab.active_deck, 1);
-        tab.prepare_run();
+        tab.prepare_run("");
         assert_eq!(tab.decks.len(), 2);
         tab.pin_deck(1);
-        tab.prepare_run();
+        tab.prepare_run("");
         assert_eq!(tab.decks.len(), 3);
         assert_eq!(tab.active_deck, 2);
         tab.select_deck(0);
@@ -1241,11 +1255,11 @@ mod tests {
     #[test]
     fn cell_preview_pins_and_a_query_closes_the_unpinned_one() {
         let mut tab = Tab::fresh();
-        tab.prepare_run();
+        tab.prepare_run("");
         let json = r#"{"name":"ada","tags":["a"]}"#;
         let fifty = "a".repeat(logic::LONG_TEXT_LIMIT);
         let section = ResultSection {
-            sql: "select id, payload, note, body".into(),
+            sql: "select id, payload, note, body from TRIP_DATA".into(),
             columns: vec![
                 ColumnInfo {
                     name: "id".into(),
@@ -1299,13 +1313,14 @@ mod tests {
         tab.toggle_cell_node("1");
         assert!(tab.decks[1].preview.as_ref().unwrap().open.is_empty());
         tab.select_deck(0);
-        tab.prepare_run();
+        tab.prepare_run("");
         assert_eq!(tab.decks.len(), 1);
         assert!(tab.decks[0].preview.is_none());
         tab.decks[0].results.push(section);
         assert!(tab.open_cell(0, 0, 3));
         assert_eq!(tab.decks.len(), 2);
         assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Text);
+        assert_eq!(tab.decks[1].label, "TRIP_DATA.body");
         tab.pin_deck(1);
         tab.select_deck(0);
         assert!(tab.open_cell(0, 0, 1));
@@ -1313,12 +1328,132 @@ mod tests {
         assert!(tab.decks[1].pinned);
         assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Text);
         assert_eq!(tab.decks[2].preview.as_ref().unwrap().kind, CellKind::Json);
-        tab.prepare_run();
+        tab.prepare_run("");
         assert_eq!(tab.decks.len(), 3);
         assert!(tab.decks[1].pinned);
         assert!(tab.decks[1].preview.is_some());
         assert!(tab.decks[2].preview.is_none());
-        assert_eq!(tab.decks[2].label, "Result 5");
+        assert_eq!(tab.decks[2].id, 5);
+    }
+
+    #[test]
+    fn long_text_that_parses_as_json_opens_the_json_viewer() {
+        let mut tab = Tab::fresh();
+        tab.prepare_run("");
+        let json = format!(r#"{{"name":"{}"}}"#, "a".repeat(logic::LONG_TEXT_LIMIT));
+        let short_json = r#"{"a":1}"#;
+        tab.decks[0].results.push(ResultSection {
+            sql: "select payload, note from TRIP_DATA".into(),
+            columns: vec![
+                ColumnInfo {
+                    name: "payload".into(),
+                    type_name: "varchar(255)".into(),
+                    numeric: false,
+                },
+                ColumnInfo {
+                    name: "note".into(),
+                    type_name: "TEXT".into(),
+                    numeric: false,
+                },
+            ],
+            rows: vec![vec![Some(json), Some(short_json.into())]],
+            error: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            truncated: false,
+        });
+        assert!(!tab.open_cell(0, 0, 1));
+        assert!(tab.open_cell(0, 0, 0));
+        let preview = tab.decks[1].preview.as_ref().unwrap();
+        assert_eq!(preview.kind, CellKind::Json);
+        assert_eq!(tab.decks[1].label, "TRIP_DATA.payload");
+    }
+
+    #[test]
+    fn long_text_uses_the_json_viewer_only_when_the_whole_value_parses() {
+        let mut tab = Tab::fresh();
+        tab.prepare_run("");
+        let json = format!(r#"{{"name":"{}"}}"#, "a".repeat(logic::LONG_TEXT_LIMIT));
+        let padded = format!("\n{json}\n");
+        let junk = format!("{json} trailing");
+        let array = format!(
+            "[{}]",
+            (0..30)
+                .map(|index| index.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        tab.decks[0].results.push(ResultSection {
+            sql: "select payload, note, items from TRIP_DATA".into(),
+            columns: vec![
+                ColumnInfo {
+                    name: "payload".into(),
+                    type_name: "varchar(255)".into(),
+                    numeric: false,
+                },
+                ColumnInfo {
+                    name: "note".into(),
+                    type_name: "TEXT".into(),
+                    numeric: false,
+                },
+                ColumnInfo {
+                    name: "items".into(),
+                    type_name: "mediumtext".into(),
+                    numeric: false,
+                },
+            ],
+            rows: vec![vec![Some(padded), Some(junk), Some(array)]],
+            error: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            truncated: false,
+        });
+        assert!(tab.open_cell(0, 0, 0));
+        assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Json);
+        tab.select_deck(0);
+        assert!(tab.open_cell(0, 0, 1));
+        assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Text);
+        tab.select_deck(0);
+        assert!(tab.open_cell(0, 0, 2));
+        assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Json);
+    }
+
+    #[test]
+    fn binary_cells_open_the_hex_viewer() {
+        let mut tab = Tab::fresh();
+        tab.prepare_run("");
+        let uuid = "550e8400e29b41d4a716446655440000";
+        let blob = "ab".repeat(logic::HEX_PREVIEW_BYTES + 1);
+        tab.decks[0].results.push(ResultSection {
+            sql: "select uuid, payload from TRIP_DATA".into(),
+            columns: vec![
+                ColumnInfo {
+                    name: "uuid".into(),
+                    type_name: "binary(16)".into(),
+                    numeric: false,
+                },
+                ColumnInfo {
+                    name: "payload".into(),
+                    type_name: "BLOB".into(),
+                    numeric: false,
+                },
+            ],
+            rows: vec![vec![Some(uuid.into()), Some(blob)], vec![None, Some("00".into())]],
+            error: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            truncated: false,
+        });
+        assert!(!tab.open_cell(0, 1, 0));
+        assert!(tab.open_cell(0, 0, 0));
+        assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Hex);
+        assert_eq!(tab.decks[1].label, "TRIP_DATA.uuid");
+        tab.select_deck(0);
+        assert!(tab.open_cell(0, 0, 1));
+        let preview = tab.decks[1].preview.as_ref().unwrap();
+        assert_eq!(preview.kind, CellKind::Hex);
+        assert_eq!(preview.column, 1);
+        assert_eq!(tab.decks[1].label, "TRIP_DATA.payload");
     }
 }
 

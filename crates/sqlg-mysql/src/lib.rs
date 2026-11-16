@@ -518,7 +518,43 @@ fn sql_text(row: &MySqlRow, idx: usize) -> String {
     cell_value(row, idx).unwrap_or_default()
 }
 
+pub fn is_binary_type(type_name: &str) -> bool {
+    matches!(
+        type_base(type_name).as_str(),
+        "binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob"
+    )
+}
+
+pub fn is_fixed_binary_type(type_name: &str) -> bool {
+    type_base(type_name) == "binary"
+}
+
+fn type_base(type_name: &str) -> String {
+    let data = type_name.trim().to_ascii_lowercase();
+    data.split('(').next().unwrap_or(&data).trim().to_string()
+}
+
+pub fn encode_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        hex.push(DIGITS[(byte >> 4) as usize] as char);
+        hex.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    hex
+}
+
 fn cell_value(row: &MySqlRow, idx: usize) -> Option<String> {
+    let binary = row
+        .columns()
+        .get(idx)
+        .is_some_and(|column| is_binary_type(column.type_info().name()));
+    if binary {
+        return match row.try_get::<Option<Vec<u8>>, _>(idx) {
+            Ok(value) => value.map(|bytes| encode_hex(&bytes)),
+            Err(_) => None,
+        };
+    }
     if let Ok(value) = row.try_get::<Option<i64>, _>(idx) {
         return value.map(|number| number.to_string());
     }
@@ -635,5 +671,22 @@ mod tests {
         assert!(!is_single_select("update trip set status = 'x'"));
         assert!(is_single_select("select 1"));
         assert!(!is_single_select("select 1; select 2"));
+    }
+
+    #[test]
+    fn binary_values_are_stored_as_hex() {
+        assert!(is_binary_type("BINARY"));
+        assert!(is_binary_type("binary(16)"));
+        assert!(is_binary_type("VARBINARY"));
+        assert!(is_binary_type("blob"));
+        assert!(is_binary_type("LONGBLOB"));
+        assert!(!is_binary_type("VARCHAR"));
+        assert!(!is_binary_type("CHAR"));
+        assert!(is_fixed_binary_type("BINARY"));
+        assert!(is_fixed_binary_type("binary(16)"));
+        assert!(!is_fixed_binary_type("VARBINARY"));
+        assert!(!is_fixed_binary_type("BLOB"));
+        assert_eq!(encode_hex(&[0x00, 0x0a, 0xff]), "000aff");
+        assert_eq!(encode_hex(&[]), "");
     }
 }

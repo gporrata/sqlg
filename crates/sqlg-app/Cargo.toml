@@ -15,6 +15,7 @@ fs4 = "0.12"
 futures = "0.3"
 rfd = "0.15"
 serde_json = { version = "1", features = ["preserve_order"] }
+sqlparser = "0.63"
 sqlg-core = { path = "../sqlg-core" }
 sqlg-mysql = { path = "../sqlg-mysql" }
 sqlx = { version = "0.8", default-features = false, features = ["mysql", "runtime-tokio", "tls-rustls-ring-native-roots", "chrono"] }

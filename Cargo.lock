@@ -5114,6 +5114,7 @@ dependencies = [
  "serde_json",
  "sqlg-core",
  "sqlg-mysql",
+ "sqlparser",
  "sqlx",
  "tokio",
  "uuid",

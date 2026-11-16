@@ -579,6 +579,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn result_column_types_use_distinct_tones() {
+        assert_eq!(column_tone("BIGINT", ""), "num");
+        assert_eq!(column_tone("VARCHAR", ""), "text");
+        assert_eq!(column_tone("DATETIME", ""), "time");
+        assert_eq!(column_tone("ENUM", ""), "enum");
+        assert_eq!(column_tone("GEOMETRY", ""), "other");
+    }
+
+    #[test]
     fn title_uses_the_first_comment_and_skips_strings() {
         let title = derive_title("select '-- not a title';\n-- Monthly report\nselect 1");
         assert_eq!(title.label, "Monthly report");

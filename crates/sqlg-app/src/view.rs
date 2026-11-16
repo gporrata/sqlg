@@ -115,6 +115,11 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .grid { border-collapse: collapse; font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; position: relative; }
 .grid th { background: var(--chip); }
+.grid .tone-num { color: var(--syn-number); }
+.grid .tone-text { color: var(--syn-string); }
+.grid .tone-time { color: var(--syn-keyword); }
+.grid .tone-enum { color: var(--syn-operator); }
+.grid .tone-other { color: var(--syn-comment); }
 .grid td.num { text-align: right; }
 .grid td.null { color: var(--muted); font-style: italic; }
 .col-sash { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
@@ -837,7 +842,7 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                     thead {
                         tr {
                             for column in section.columns.clone() {
-                                th { style: "width: {column.width}px; min-width: {column.width}px",
+                                th { class: "tone-{column.tone}", style: "width: {column.width}px; min-width: {column.width}px",
                                     "{column.name}"
                                     span {
                                         class: "col-sash",
@@ -864,7 +869,7 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                             tr {
                                 for cell in row {
                                     td {
-                                        class: if cell.null { "null" } else if cell.numeric { "num" } else { "" },
+                                        class: "{cell_class(&cell)}",
                                         onclick: {
                                             let text = cell.text.clone();
                                             move |_| copy_cell(text.clone())
@@ -885,6 +890,16 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
             }
         }
     }
+}
+
+fn cell_class(cell: &CellView) -> String {
+    let mut class = format!("tone-{}", cell.tone);
+    if cell.null {
+        class.push_str(" null");
+    } else if cell.numeric {
+        class.push_str(" num");
+    }
+    class
 }
 
 #[component]
@@ -1140,6 +1155,7 @@ struct ColumnView {
     name: String,
     width: f64,
     numeric: bool,
+    tone: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1147,6 +1163,7 @@ struct CellView {
     text: String,
     null: bool,
     numeric: bool,
+    tone: String,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1446,6 +1463,7 @@ fn section_view(
             name: column.name.clone(),
             width: widths.get(&column.name).copied().unwrap_or(140.0),
             numeric: column.numeric,
+            tone: logic::column_tone(&column.type_name, "").into(),
         })
         .collect::<Vec<_>>();
     let rows = section
@@ -1456,17 +1474,23 @@ fn section_view(
             row.iter()
                 .enumerate()
                 .map(|(index, cell)| {
-                    let numeric = columns.get(index).is_some_and(|column| column.numeric);
+                    let column = columns.get(index);
+                    let numeric = column.is_some_and(|column| column.numeric);
+                    let tone = column
+                        .map(|column| column.tone.clone())
+                        .unwrap_or_else(|| "other".into());
                     match cell {
                         Some(text) => CellView {
                             text: text.clone(),
                             null: false,
                             numeric,
+                            tone,
                         },
                         None => CellView {
                             text: "null".into(),
                             null: true,
                             numeric,
+                            tone,
                         },
                     }
                 })

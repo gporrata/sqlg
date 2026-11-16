@@ -678,6 +678,21 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
                         sync_highlight_scroll().await;
                     });
                 },
+                onkeydown: {
+                    let tab_id = tab_id.clone();
+                    move |event| {
+                        let Some(step) = caret_step(&event) else {
+                            return;
+                        };
+                        event.prevent_default();
+                        move_editor_caret(
+                            window_id,
+                            tab_id.clone(),
+                            event.modifiers().shift(),
+                            step,
+                        );
+                    }
+                },
                 onselect: {
                     let tab_id = tab_id.clone();
                     move |_| {
@@ -1839,6 +1854,76 @@ if (node) {{
 }}"#
     ));
     let _ = eval.recv::<bool>().await;
+}
+
+enum CaretStep {
+    WordLeft,
+    WordRight,
+    QueryUp,
+    QueryDown,
+}
+
+fn caret_step(event: &Event<KeyboardData>) -> Option<CaretStep> {
+    let modifiers = event.modifiers();
+    if modifiers.alt() || !moves_caret(modifiers.ctrl(), modifiers.meta()) {
+        return None;
+    }
+    if event.code() == Code::ArrowLeft || event.key() == Key::ArrowLeft {
+        Some(CaretStep::WordLeft)
+    } else if event.code() == Code::ArrowRight || event.key() == Key::ArrowRight {
+        Some(CaretStep::WordRight)
+    } else if event.code() == Code::ArrowUp || event.key() == Key::ArrowUp {
+        Some(CaretStep::QueryUp)
+    } else if event.code() == Code::ArrowDown || event.key() == Key::ArrowDown {
+        Some(CaretStep::QueryDown)
+    } else {
+        None
+    }
+}
+
+fn moves_caret(ctrl: bool, meta: bool) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        meta && !ctrl
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        ctrl && !meta
+    }
+}
+
+fn move_editor_caret(window_id: u64, tab_id: String, extend: bool, step: CaretStep) {
+    if runtime::lock().blocks_shortcuts() {
+        return;
+    }
+    let (text, anchor, head) = {
+        let app = runtime::lock();
+        let Some(tab) = app
+            .window(window_id)
+            .and_then(|gui| gui.tabs.iter().find(|tab| tab.id == tab_id))
+        else {
+            return;
+        };
+        (tab.buffer.text.clone(), tab.buffer.anchor, tab.buffer.head)
+    };
+    let next = match step {
+        CaretStep::WordLeft => logic::find_previous_word(&text, head),
+        CaretStep::WordRight => logic::find_next_word(&text, head),
+        CaretStep::QueryUp => logic::find_previous_query(&text, head),
+        CaretStep::QueryDown => logic::find_next_query(&text, head),
+    };
+    let anchor = if extend { anchor } else { next };
+    let anchor_utf16 = logic::byte_to_utf16(&text, anchor);
+    let head_utf16 = logic::byte_to_utf16(&text, next);
+    runtime::apply(Message::Selection {
+        window: window_id,
+        tab: tab_id,
+        anchor: anchor_utf16 as usize,
+        head: head_utf16 as usize,
+    });
+    spawn(async move {
+        place_caret(anchor_utf16, head_utf16).await;
+    });
 }
 
 fn editor_text(window_id: u64, tab_id: &str) -> String {

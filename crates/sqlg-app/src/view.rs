@@ -132,8 +132,11 @@ button.dismiss { color: var(--muted); }
 button.dismiss:hover { color: var(--danger); border-color: var(--danger); }
 .ic.dismiss { color: inherit; }
 .section { margin: 8px; }
-.grid { border-collapse: collapse; font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; position: relative; }
+.grid { border-collapse: collapse; table-layout: fixed; width: max-content; font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; position: relative; white-space: nowrap; }
+.grid .clip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid th.raised, .grid td.raised { z-index: 3; }
+.grid th.front, .grid td.front { z-index: 4; }
 .grid th { background: var(--chip); color: var(--readable); }
 .grid .tone-num { color: var(--syn-number); }
 .grid .tone-text { color: var(--syn-string); }
@@ -158,7 +161,13 @@ button.dismiss:hover { color: var(--danger); border-color: var(--danger); }
 .cell-view .j-obj, .cell-view .j-arr { color: var(--muted); }
 .cell-view pre { margin: 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--syn-string); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cell-view pre.hex { flex: 1; min-height: 160px; overflow: auto; white-space: pre; color: var(--readable); }
-.col-sash { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
+.col-sash { position: absolute; top: 0; bottom: 0; right: -2px; width: 5px; z-index: 2; box-sizing: border-box; background: transparent; pointer-events: none; cursor: col-resize; touch-action: none; user-select: none; }
+.col-sash.wide { pointer-events: auto; background: var(--line); }
+.col-sash.dragged { pointer-events: auto; background: var(--accent); }
+.col-sash .sash-line { position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; pointer-events: none; background: var(--editor); }
+.col-sash.wide::before, .col-sash.wide::after, .col-sash.dragged::before, .col-sash.dragged::after { content: ""; position: absolute; top: 0; bottom: 0; width: 10px; background: transparent; }
+.col-sash.wide::before, .col-sash.dragged::before { right: 100%; }
+.col-sash.wide::after, .col-sash.dragged::after { left: 100%; }
 .placeholder, .muted { color: var(--muted); padding: 8px; }
 .footer .summary { flex: 1; text-align: center; color: var(--muted); }
 .footer select.theme { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; max-width: 180px; }
@@ -235,8 +244,19 @@ fn Shell(window_id: u64) -> Element {
             style: "{shell_style}",
             tabindex: "0",
             onkeydown: move |event| handle_key(window_id, event),
+            onmousedown: move |_| {
+                take_column_edge_click();
+            },
             onmousemove: move |event| drag_move(event),
-            onmouseup: move |_| runtime::apply(Message::DragEnd),
+            onmouseup: move |_| {
+                let column_edge = runtime::lock().drag.as_ref().is_some_and(|drag| {
+                    matches!(drag.kind, DragKind::Column { .. })
+                });
+                if column_edge {
+                    arm_column_edge_click();
+                }
+                runtime::apply(Message::DragEnd);
+            },
             onclick: move |_| close_menu_if_open(window_id),
             Toolbar { window_id, view: view.clone() }
             div { class: "body",
@@ -840,6 +860,10 @@ fn DiagnosticRow(window_id: u64, tab_id: Option<String>, item: DiagnosticView) -
 fn ResultsPane(window_id: u64, view: ShellView) -> Element {
     let showing_preview = view.preview.is_some();
     let preview = view.preview.clone();
+    let dragged_column = match &view.drag_kind {
+        Some(DragKind::Column { name, .. }) => Some(name.clone()),
+        _ => None,
+    };
     rsx! {
         section { class: "results",
             if !view.decks.is_empty() {
@@ -851,14 +875,24 @@ fn ResultsPane(window_id: u64, view: ShellView) -> Element {
             }
             div { class: "result-scroll",
                 if let Some(preview) = preview {
-                    CellPreviewPane { window_id, tab_id: view.tab_id.clone(), preview }
+                    CellPreviewPane {
+                        window_id,
+                        tab_id: view.tab_id.clone(),
+                        preview,
+                        dragged_column: dragged_column.clone(),
+                    }
                 }
                 if !showing_preview && view.results.is_empty() && view.restored {
                     p { class: "placeholder", "Run to see results" }
                 }
                 if !showing_preview {
                     for section in view.results.clone() {
-                        ResultBlock { window_id, tab_id: view.tab_id.clone(), section }
+                        ResultBlock {
+                            window_id,
+                            tab_id: view.tab_id.clone(),
+                            section,
+                            dragged_column: dragged_column.clone(),
+                        }
                     }
                     if view.more_rows {
                         button {
@@ -978,7 +1012,15 @@ fn CloseDeckButton(
 }
 
 #[component]
-fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> Element {
+fn ResultBlock(
+    window_id: u64,
+    tab_id: Option<String>,
+    section: SectionView,
+    dragged_column: Option<String>,
+) -> Element {
+    let mut hot_column = use_signal(|| None::<usize>);
+    let hot = hot_column();
+    let column_count = section.columns.len();
     rsx! {
         div { class: "section",
             if !section.sql.is_empty() {
@@ -990,26 +1032,23 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                 p { class: "muted", "{section.summary}" }
             } else {
                 table { class: "grid",
+                    onmouseleave: move |_| hot_column.set(None),
                     thead {
                         tr {
-                            for column in section.columns.clone() {
-                                th { style: "width: {column.width}px; min-width: {column.width}px",
-                                    "{column.name}"
-                                    span {
-                                        class: "col-sash",
-                                        onmousedown: {
-                                            let tab_id = tab_id.clone();
-                                            let name = column.name.clone();
-                                            move |event| {
-                                                let Some(tab_id) = tab_id.clone() else {
-                                                    return;
-                                                };
-                                                start_drag(window_id, event, DragKind::Column {
-                                                    tab: tab_id,
-                                                    name: name.clone(),
-                                                });
-                                            }
-                                        },
+                            for (column_index, column) in section.columns.clone().into_iter().enumerate() {
+                                th {
+                                    class: "{classify_column_edge(hot, column_index, &section.columns, dragged_column.as_deref())}",
+                                    style: "width: {column.width}px; min-width: {column.width}px; max-width: {column.width}px",
+                                    onmouseenter: move |_| hot_column.set(Some(column_index)),
+                                    span { class: "clip", "{column.name}" }
+                                    if column_index + 1 < column_count {
+                                        ColumnSash {
+                                            window_id,
+                                            tab_id: tab_id.clone(),
+                                            name: column.name.clone(),
+                                            wide: column_edge_wide(hot, column_index),
+                                            dragged: dragged_column.as_deref() == Some(column.name.as_str()),
+                                        }
                                     }
                                 }
                             }
@@ -1020,8 +1059,9 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                             tr {
                                 for (column_index, cell) in row.into_iter().enumerate() {
                                     td {
-                                        class: "{cell_class(&cell)}",
+                                        class: "{grid_cell_class(&cell, classify_column_edge(hot, column_index, &section.columns, dragged_column.as_deref()))}",
                                         title: "{cell_title(&cell)}",
+                                        onmouseenter: move |_| hot_column.set(Some(column_index)),
                                         onclick: {
                                             let text = if cell.uuid {
                                                 logic::uuid_text(&cell.text)
@@ -1031,6 +1071,9 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                                             };
                                             let json = cell.json;
                                             move |_| {
+                                                if take_column_edge_click() {
+                                                    return;
+                                                }
                                                 if !json {
                                                     copy_cell(text.clone());
                                                 }
@@ -1056,7 +1099,16 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                                                 });
                                             }
                                         },
-                                        "{cell_label(&cell)}"
+                                        span { class: "clip", "{cell_label(&cell)}" }
+                                        if column_index + 1 < column_count {
+                                            ColumnSash {
+                                                window_id,
+                                                tab_id: tab_id.clone(),
+                                                name: section.columns[column_index].name.clone(),
+                                                wide: column_edge_wide(hot, column_index),
+                                                dragged: dragged_column.as_deref() == Some(section.columns[column_index].name.as_str()),
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1157,10 +1209,18 @@ fn Footer(view: ShellView) -> Element {
 }
 
 #[component]
-fn CellPreviewPane(window_id: u64, tab_id: Option<String>, preview: CellPreviewView) -> Element {
+fn CellPreviewPane(
+    window_id: u64,
+    tab_id: Option<String>,
+    preview: CellPreviewView,
+    dragged_column: Option<String>,
+) -> Element {
+    let mut hot_column = use_signal(|| None::<usize>);
+    let hot = hot_column();
     let index = preview.deck_index;
     let pinned = preview.pinned;
     let body = preview.body.clone();
+    let column_count = preview.columns.len();
     rsx! {
         div { class: "cell-view",
             div { class: "bar",
@@ -1200,19 +1260,45 @@ fn CellPreviewPane(window_id: u64, tab_id: Option<String>, preview: CellPreviewV
             }
             div { class: "source",
                 table { class: "grid",
+                    onmouseleave: move |_| hot_column.set(None),
                     thead {
                         tr {
-                            for column in preview.columns.clone() {
-                                th { style: "width: {column.width}px; min-width: {column.width}px",
-                                    "{column.name}"
+                            for (column_index, column) in preview.columns.clone().into_iter().enumerate() {
+                                th {
+                                    class: "{classify_column_edge(hot, column_index, &preview.columns, dragged_column.as_deref())}",
+                                    style: "width: {column.width}px; min-width: {column.width}px; max-width: {column.width}px",
+                                    onmouseenter: move |_| hot_column.set(Some(column_index)),
+                                    span { class: "clip", "{column.name}" }
+                                    if column_index + 1 < column_count {
+                                        ColumnSash {
+                                            window_id,
+                                            tab_id: tab_id.clone(),
+                                            name: column.name.clone(),
+                                            wide: column_edge_wide(hot, column_index),
+                                            dragged: dragged_column.as_deref() == Some(column.name.as_str()),
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                     tbody {
                         tr {
-                            for cell in preview.cells.clone() {
-                                td { class: "{cell_class(&cell)}", "{cell_label(&cell)}" }
+                            for (column_index, cell) in preview.cells.clone().into_iter().enumerate() {
+                                td {
+                                    class: "{grid_cell_class(&cell, classify_column_edge(hot, column_index, &preview.columns, dragged_column.as_deref()))}",
+                                    onmouseenter: move |_| hot_column.set(Some(column_index)),
+                                    span { class: "clip", "{cell_label(&cell)}" }
+                                    if column_index + 1 < column_count {
+                                        ColumnSash {
+                                            window_id,
+                                            tab_id: tab_id.clone(),
+                                            name: preview.columns[column_index].name.clone(),
+                                            wide: column_edge_wide(hot, column_index),
+                                            dragged: dragged_column.as_deref() == Some(preview.columns[column_index].name.as_str()),
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1841,12 +1927,8 @@ fn section_view(
     show_rows: usize,
     widths: &std::collections::BTreeMap<String, f64>,
 ) -> SectionView {
-    let columns = section
-        .columns
-        .iter()
-        .map(|column| column_view(column, widths))
-        .collect::<Vec<_>>();
-    let rows = section
+    let mut columns = section.columns.iter().map(column_view).collect::<Vec<_>>();
+    let rows: Vec<Vec<CellView>> = section
         .rows
         .iter()
         .take(show_rows)
@@ -1857,6 +1939,7 @@ fn section_view(
                 .collect()
         })
         .collect();
+    apply_shown_widths(&mut columns, &rows, widths);
     let affected = section
         .rows_affected
         .map(|count| format!("{count} affected"))
@@ -1879,13 +1962,26 @@ fn section_view(
     }
 }
 
-fn column_view(
-    column: &sqlg_mysql::ColumnInfo,
-    widths: &std::collections::BTreeMap<String, f64>,
-) -> ColumnView {
+fn apply_shown_widths(
+    columns: &mut [ColumnView],
+    rows: &[Vec<CellView>],
+    saved: &std::collections::BTreeMap<String, f64>,
+) {
+    for (index, column) in columns.iter_mut().enumerate() {
+        let labels = rows
+            .iter()
+            .filter_map(|row| row.get(index))
+            .map(cell_label)
+            .collect::<Vec<_>>();
+        column.width =
+            logic::fit_column_width(saved.get(&column.name).copied(), &column.name, &labels);
+    }
+}
+
+fn column_view(column: &sqlg_mysql::ColumnInfo) -> ColumnView {
     ColumnView {
         name: column.name.clone(),
-        width: widths.get(&column.name).copied().unwrap_or(140.0),
+        width: logic::COLUMN_MIN,
         numeric: column.numeric,
         tone: logic::column_tone(&column.type_name, "").into(),
         json: logic::is_json_column(&column.type_name),
@@ -1935,11 +2031,7 @@ fn cell_preview_view(
     widths: &std::collections::BTreeMap<String, f64>,
 ) -> Option<CellPreviewView> {
     let preview = deck.preview.as_ref()?;
-    let columns = preview
-        .columns
-        .iter()
-        .map(|column| column_view(column, widths))
-        .collect::<Vec<_>>();
+    let mut columns = preview.columns.iter().map(column_view).collect::<Vec<_>>();
     let cells = preview
         .values
         .iter()
@@ -1957,7 +2049,8 @@ fn cell_preview_view(
             }
             cell
         })
-        .collect();
+        .collect::<Vec<_>>();
+    apply_shown_widths(&mut columns, std::slice::from_ref(&cells), widths);
     let text = preview
         .values
         .get(preview.column)
@@ -2211,6 +2304,109 @@ fn drag_move(event: Event<MouseData>) {
     });
 }
 
+static COLUMN_EDGE_CLICK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn arm_column_edge_click() {
+    COLUMN_EDGE_CLICK.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn take_column_edge_click() -> bool {
+    COLUMN_EDGE_CLICK.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn column_edge_wide(hot: Option<usize>, index: usize) -> bool {
+    matches!(hot, Some(hot) if hot == index || hot == index + 1)
+}
+
+fn classify_column_edge(
+    hot: Option<usize>,
+    index: usize,
+    columns: &[ColumnView],
+    dragged: Option<&str>,
+) -> &'static str {
+    let Some(column) = columns.get(index) else {
+        return "";
+    };
+    let count = columns.len();
+    let owns = owns_active_edge(hot, index, count, dragged, &column.name);
+    let next_owns = columns
+        .get(index + 1)
+        .is_some_and(|next| owns_active_edge(hot, index + 1, count, dragged, &next.name));
+    match (owns, next_owns) {
+        (true, true) => "raised front",
+        (true, false) => "raised",
+        (false, _) => "",
+    }
+}
+
+fn owns_active_edge(
+    hot: Option<usize>,
+    index: usize,
+    count: usize,
+    dragged: Option<&str>,
+    name: &str,
+) -> bool {
+    index + 1 < count && (column_edge_wide(hot, index) || dragged == Some(name))
+}
+
+fn grid_cell_class(cell: &CellView, layer: &str) -> String {
+    let mut class = cell_class(cell);
+    if !layer.is_empty() {
+        class.push(' ');
+        class.push_str(layer);
+    }
+    class
+}
+
+fn column_edge_class(wide: bool, dragged: bool) -> &'static str {
+    match (wide, dragged) {
+        (_, true) => "col-sash wide dragged",
+        (true, false) => "col-sash wide",
+        (false, false) => "col-sash",
+    }
+}
+
+#[component]
+fn ColumnSash(
+    window_id: u64,
+    tab_id: Option<String>,
+    name: String,
+    wide: bool,
+    dragged: bool,
+) -> Element {
+    let class = column_edge_class(wide, dragged);
+    rsx! {
+        span {
+            class: "{class}",
+            onmousedown: {
+                let tab_id = tab_id.clone();
+                let name = name.clone();
+                move |event| {
+                    let Some(tab_id) = tab_id.clone() else {
+                        return;
+                    };
+                    start_drag(
+                        window_id,
+                        event,
+                        DragKind::Column {
+                            tab: tab_id,
+                            name: name.clone(),
+                        },
+                    );
+                }
+            },
+            onclick: move |event| {
+                event.prevent_default();
+                event.stop_propagation();
+                take_column_edge_click();
+            },
+            if wide || dragged {
+                span { class: "sash-line" }
+            }
+        }
+    }
+}
+
 fn sash_class(row: bool, dragged: bool) -> &'static str {
     match (row, dragged) {
         (false, false) => "sash",
@@ -2387,7 +2583,10 @@ fn form_value(field: Field) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_editor_lines, format_editor_line_numbers};
+    use super::{
+        ColumnView, classify_column_edge, column_edge_class, column_edge_wide, count_editor_lines,
+        format_editor_line_numbers,
+    };
 
     #[test]
     fn editor_line_numbers_follow_newlines() {
@@ -2399,5 +2598,36 @@ mod tests {
         assert_eq!(count_editor_lines("a\r\nb\r\nc"), 3);
         assert_eq!(format_editor_line_numbers(3), "1\n2\n3");
         assert_eq!(count_editor_lines("a\n\nb"), 3);
+    }
+
+    fn column(name: &str) -> ColumnView {
+        ColumnView {
+            name: name.to_string(),
+            width: 72.0,
+            numeric: false,
+            tone: String::new(),
+            json: false,
+            long_text: false,
+            type_name: String::new(),
+        }
+    }
+
+    #[test]
+    fn hovered_column_widens_both_borders() {
+        let columns = vec![column("a"), column("b"), column("c")];
+        assert!(!column_edge_wide(None, 1));
+        assert!(column_edge_wide(Some(1), 1));
+        assert!(column_edge_wide(Some(1), 0));
+        assert!(!column_edge_wide(Some(1), 2));
+        assert_eq!(
+            classify_column_edge(Some(1), 0, &columns, None),
+            "raised front"
+        );
+        assert_eq!(classify_column_edge(Some(1), 1, &columns, None), "raised");
+        assert_eq!(classify_column_edge(Some(1), 2, &columns, None), "");
+        assert_eq!(classify_column_edge(None, 0, &columns, Some("a")), "raised");
+        assert_eq!(column_edge_class(false, true), "col-sash wide dragged");
+        assert_eq!(column_edge_class(true, false), "col-sash wide");
+        assert_eq!(column_edge_class(false, false), "col-sash");
     }
 }

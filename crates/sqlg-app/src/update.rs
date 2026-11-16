@@ -1044,9 +1044,11 @@ fn on_drag(app: &mut App, x: f32, y: f32) -> Vec<Effect> {
             logic::EDITOR_HEIGHT_MIN,
             logic::limit_editor_height(gui.height as f32),
         ),
-        DragKind::Column { .. } => {
-            logic::clamp_pane(origin_size + delta, logic::COLUMN_MIN as f32, 800.0)
-        }
+        DragKind::Column { .. } => logic::clamp_pane(
+            origin_size + delta,
+            logic::COLUMN_MIN as f32,
+            logic::COLUMN_MAX as f32,
+        ),
     };
     let Some(gui) = app.window_mut(window_id) else {
         return Vec::new();

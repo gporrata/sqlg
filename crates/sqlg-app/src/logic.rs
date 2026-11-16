@@ -11,6 +11,9 @@ use sqlparser::parser::Parser;
 
 pub const VISIBLE_ROWS: usize = 100;
 pub const COLUMN_MIN: f64 = 72.0;
+pub const COLUMN_MAX: f64 = 800.0;
+pub const COLUMN_CHAR_PX: f64 = 7.2;
+pub const COLUMN_SLACK: f64 = 4.0;
 pub const SCHEMA_MIN: f32 = 160.0;
 pub const SCHEMA_MAX: f32 = 600.0;
 pub const EDITOR_MIN: f32 = 220.0;
@@ -724,6 +727,22 @@ pub fn is_long_text_column(type_name: &str) -> bool {
     )
 }
 
+pub fn fit_column_width(saved: Option<f64>, header: &str, labels: &[String]) -> f64 {
+    if let Some(width) = saved {
+        return width.max(COLUMN_MIN).min(COLUMN_MAX);
+    }
+    let value_chars = if labels.is_empty() {
+        0.0
+    } else {
+        let total: usize = labels.iter().map(|label| label.chars().count()).sum();
+        total as f64 / labels.len() as f64
+    };
+    let chars = value_chars.max(header.chars().count() as f64);
+    (chars * COLUMN_CHAR_PX + COLUMN_SLACK)
+        .round()
+        .clamp(COLUMN_MIN, COLUMN_MAX)
+}
+
 pub fn preview_label(text: &str, limit: usize) -> String {
     let mut label = String::new();
     for (index, ch) in text.chars().enumerate() {
@@ -1164,6 +1183,30 @@ fn type_tone(type_name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_column_width_averages_shown_labels() {
+        let short = "a".repeat(10);
+        let long = "a".repeat(30);
+        let mid = "a".repeat(20);
+        let mixed = fit_column_width(None, "n", &[short, long.clone()]);
+        let only_long = fit_column_width(None, "n", &[long]);
+        let paired = fit_column_width(None, "n", &[mid.clone(), mid]);
+        assert!(mixed < only_long);
+        assert_eq!(mixed, paired);
+        let header = "h".repeat(40);
+        assert_eq!(
+            fit_column_width(None, &header, &["1".into(), "22".into()]),
+            fit_column_width(None, &header, &[])
+        );
+        assert_eq!(fit_column_width(None, "id", &[]), COLUMN_MIN);
+        assert_eq!(fit_column_width(None, "n", &["a".repeat(400)]), COLUMN_MAX);
+        assert_eq!(
+            fit_column_width(Some(180.0), "n", &["a".repeat(400)]),
+            180.0
+        );
+        assert_eq!(fit_column_width(Some(10.0), "n", &[]), COLUMN_MIN);
+    }
 
     #[test]
     fn json_button_shows_ten_characters() {

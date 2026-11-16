@@ -194,7 +194,18 @@ pub enum Message {
     FormTest,
     FormDelete,
     FormTested(Result<String, String>),
-    ShowJson(String),
+    OpenCell {
+        window: u64,
+        tab: String,
+        section: usize,
+        row: usize,
+        column: usize,
+    },
+    ToggleCellNode {
+        window: u64,
+        tab: String,
+        path: String,
+    },
     DismissModal,
     CloseChoice {
         save: bool,

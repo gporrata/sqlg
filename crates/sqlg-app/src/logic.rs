@@ -276,14 +276,26 @@ pub fn utf16_to_byte(text: &str, utf16_index: usize) -> usize {
 
 const JSON_TREE_DEPTH: u8 = 32;
 
+pub const JSON_LABEL_LIMIT: usize = 10;
+pub const LONG_TEXT_LIMIT: usize = 50;
+
 pub fn is_json_column(type_name: &str) -> bool {
     type_name.eq_ignore_ascii_case("json")
 }
 
-pub fn json_button_label(text: &str) -> String {
+pub fn is_long_text_column(type_name: &str) -> bool {
+    let data = type_name.to_ascii_lowercase();
+    let base = data.split('(').next().unwrap_or(&data).trim();
+    matches!(
+        base,
+        "varchar" | "text" | "tinytext" | "mediumtext" | "longtext"
+    )
+}
+
+pub fn preview_label(text: &str, limit: usize) -> String {
     let mut label = String::new();
     for (index, ch) in text.chars().enumerate() {
-        if index == 10 {
+        if index == limit {
             label.push_str("...");
             break;
         }
@@ -294,6 +306,10 @@ pub fn json_button_label(text: &str) -> String {
         }
     }
     label
+}
+
+pub fn json_button_label(text: &str) -> String {
+    preview_label(text, JSON_LABEL_LIMIT)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -723,11 +739,23 @@ mod tests {
         assert!(is_json_column("json"));
         assert!(!is_json_column("VARCHAR"));
         assert_eq!(json_button_label(r#"{"a":1}"#), r#"{"a":1}"#);
-        assert_eq!(
-            json_button_label(r#"{"abcdefghij":1}"#),
-            r#"{"abcdefgh..."#
-        );
+        assert_eq!(json_button_label(r#"{"abcdefghij":1}"#), r#"{"abcdefgh..."#);
         assert_eq!(json_button_label("{\n\"ab\"}"), "{ \"ab\"}");
+        assert!(is_long_text_column("VARCHAR"));
+        assert!(is_long_text_column("varchar(255)"));
+        assert!(is_long_text_column("TEXT"));
+        assert!(is_long_text_column("tinytext"));
+        assert!(is_long_text_column("mediumtext"));
+        assert!(is_long_text_column("LONGTEXT"));
+        assert!(!is_long_text_column("JSON"));
+        assert!(!is_long_text_column("CHAR"));
+        assert!(!is_long_text_column("BLOB"));
+        let fifty = "a".repeat(LONG_TEXT_LIMIT);
+        assert_eq!(preview_label(&fifty, LONG_TEXT_LIMIT), fifty);
+        assert_eq!(
+            preview_label(&format!("{fifty}b"), LONG_TEXT_LIMIT),
+            format!("{fifty}...")
+        );
     }
 
     #[test]

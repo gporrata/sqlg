@@ -307,8 +307,22 @@ pub fn update(app: &mut App, message: Message) -> Vec<Effect> {
             }
             Vec::new()
         }
-        Message::ShowJson(text) => {
-            app.modal = Modal::Json(text);
+        Message::OpenCell {
+            window,
+            tab,
+            section,
+            row,
+            column,
+        } => {
+            if let Some(tab) = app.tab_mut(window, &tab) {
+                tab.open_cell(section, row, column);
+            }
+            Vec::new()
+        }
+        Message::ToggleCellNode { window, tab, path } => {
+            if let Some(tab) = app.tab_mut(window, &tab) {
+                tab.toggle_cell_node(&path);
+            }
             Vec::new()
         }
         Message::DismissModal => {

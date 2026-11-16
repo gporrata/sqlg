@@ -112,8 +112,24 @@ pub struct ResultDeck {
     pub pinned: bool,
     pub label: String,
     pub results: Vec<ResultSection>,
+    pub preview: Option<CellPreview>,
     pub show_rows: usize,
     pub footer: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CellPreview {
+    pub kind: CellKind,
+    pub columns: Vec<ColumnInfo>,
+    pub values: Vec<Option<String>>,
+    pub column: usize,
+    pub open: HashSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellKind {
+    Json,
+    Text,
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +155,6 @@ pub enum Modal {
     None,
     Connections(ConnForm),
     Close(ClosePrompt),
-    Json(String),
 }
 
 pub struct ConnForm {
@@ -583,7 +598,99 @@ impl Tab {
         self.decks.get(self.active_deck.min(self.decks.len() - 1))
     }
 
+    pub fn current_deck_mut(&mut self) -> Option<&mut ResultDeck> {
+        if self.decks.is_empty() {
+            return None;
+        }
+        let index = self.active_deck.min(self.decks.len() - 1);
+        self.decks.get_mut(index)
+    }
+
+    pub fn open_cell(&mut self, section: usize, row: usize, column: usize) -> bool {
+        let preview = {
+            let Some(deck) = self.current_deck() else {
+                return false;
+            };
+            let Some(section) = deck.results.get(section) else {
+                return false;
+            };
+            let Some(values) = section.rows.get(row).cloned() else {
+                return false;
+            };
+            let Some(info) = section.columns.get(column) else {
+                return false;
+            };
+            let Some(text) = values.get(column).and_then(|value| value.as_deref()) else {
+                return false;
+            };
+            let kind = if logic::is_json_column(&info.type_name) {
+                CellKind::Json
+            } else if logic::is_long_text_column(&info.type_name)
+                && text.chars().count() > logic::LONG_TEXT_LIMIT
+            {
+                CellKind::Text
+            } else {
+                return false;
+            };
+            CellPreview {
+                kind,
+                columns: section.columns.clone(),
+                values,
+                column,
+                open: HashSet::new(),
+            }
+        };
+        self.show_cell_preview(preview);
+        true
+    }
+
+    pub fn toggle_cell_node(&mut self, path: &str) {
+        let Some(preview) = self
+            .current_deck_mut()
+            .and_then(|deck| deck.preview.as_mut())
+        else {
+            return;
+        };
+        if !preview.open.insert(path.to_string()) {
+            preview.open.remove(path);
+        }
+    }
+
+    fn show_cell_preview(&mut self, preview: CellPreview) {
+        let title = match preview.kind {
+            CellKind::Json => "JSON",
+            CellKind::Text => "Text",
+        };
+        let index = if let Some(index) = self
+            .decks
+            .iter()
+            .position(|deck| deck.preview.is_some() && !deck.pinned)
+        {
+            index
+        } else {
+            self.push_deck()
+        };
+        let id = self.decks[index].id;
+        let deck = &mut self.decks[index];
+        deck.preview = Some(preview);
+        deck.results.clear();
+        deck.show_rows = logic::VISIBLE_ROWS;
+        deck.footer.clear();
+        deck.label = format!("{title} {id}");
+        self.active_deck = index;
+    }
+
+    fn close_unpinned_previews(&mut self) {
+        let active_id = self.decks.get(self.active_deck).map(|deck| deck.id);
+        self.decks
+            .retain(|deck| deck.pinned || deck.preview.is_none());
+        self.active_deck = active_id
+            .and_then(|id| self.decks.iter().position(|deck| deck.id == id))
+            .unwrap_or_else(|| self.decks.len().saturating_sub(1));
+    }
+
     pub fn prepare_run(&mut self) {
+        self.close_unpinned_previews();
         let index = if self.decks.is_empty() {
             self.push_deck()
         } else {
@@ -597,6 +704,8 @@ impl Tab {
         self.active_deck = index;
         let deck = &mut self.decks[index];
         deck.results.clear();
+        deck.preview = None;
+        deck.label = format!("Result {}", deck.id);
         deck.show_rows = logic::VISIBLE_ROWS;
         deck.footer = "Running…".into();
         self.run_deck = deck.id;
@@ -652,6 +761,7 @@ impl Tab {
             pinned: false,
             label: format!("Result {id}"),
             results: Vec::new(),
+            preview: None,
             show_rows: logic::VISIBLE_ROWS,
             footer: String::new(),
         });
@@ -1126,6 +1236,89 @@ mod tests {
         tab.unpin_deck(0);
         assert_eq!(tab.decks.len(), 2);
         assert!(tab.decks.iter().all(|deck| deck.id != 1));
+    }
+
+    #[test]
+    fn cell_preview_pins_and_a_query_closes_the_unpinned_one() {
+        let mut tab = Tab::fresh();
+        tab.prepare_run();
+        let json = r#"{"name":"ada","tags":["a"]}"#;
+        let fifty = "a".repeat(logic::LONG_TEXT_LIMIT);
+        let section = ResultSection {
+            sql: "select id, payload, note, body".into(),
+            columns: vec![
+                ColumnInfo {
+                    name: "id".into(),
+                    type_name: "INT".into(),
+                    numeric: true,
+                },
+                ColumnInfo {
+                    name: "payload".into(),
+                    type_name: "json".into(),
+                    numeric: false,
+                },
+                ColumnInfo {
+                    name: "note".into(),
+                    type_name: "varchar(255)".into(),
+                    numeric: false,
+                },
+                ColumnInfo {
+                    name: "body".into(),
+                    type_name: "TEXT".into(),
+                    numeric: false,
+                },
+            ],
+            rows: vec![
+                vec![
+                    Some("1".into()),
+                    Some(json.into()),
+                    Some(fifty),
+                    Some(format!("{}b", "n".repeat(logic::LONG_TEXT_LIMIT))),
+                ],
+                vec![Some("2".into()), None, Some("x".into()), Some("y".into())],
+            ],
+            error: None,
+            rows_affected: None,
+            elapsed_ms: Some(3),
+            truncated: false,
+        };
+        tab.decks[0].results.push(section.clone());
+        assert!(!tab.open_cell(0, 0, 0));
+        assert!(!tab.open_cell(0, 0, 2));
+        assert!(!tab.open_cell(0, 1, 1));
+        assert_eq!(tab.decks.len(), 1);
+        assert!(tab.open_cell(0, 0, 1));
+        assert_eq!(tab.decks.len(), 2);
+        assert_eq!(tab.active_deck, 1);
+        let preview = tab.decks[1].preview.as_ref().unwrap();
+        assert_eq!(preview.kind, CellKind::Json);
+        assert_eq!(preview.column, 1);
+        assert_eq!(preview.values[1].as_deref(), Some(json));
+        tab.toggle_cell_node("1");
+        assert!(tab.decks[1].preview.as_ref().unwrap().open.contains("1"));
+        tab.toggle_cell_node("1");
+        assert!(tab.decks[1].preview.as_ref().unwrap().open.is_empty());
+        tab.select_deck(0);
+        tab.prepare_run();
+        assert_eq!(tab.decks.len(), 1);
+        assert!(tab.decks[0].preview.is_none());
+        tab.decks[0].results.push(section);
+        assert!(tab.open_cell(0, 0, 3));
+        assert_eq!(tab.decks.len(), 2);
+        assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Text);
+        tab.pin_deck(1);
+        tab.select_deck(0);
+        assert!(tab.open_cell(0, 0, 1));
+        assert_eq!(tab.decks.len(), 3);
+        assert!(tab.decks[1].pinned);
+        assert_eq!(tab.decks[1].preview.as_ref().unwrap().kind, CellKind::Text);
+        assert_eq!(tab.decks[2].preview.as_ref().unwrap().kind, CellKind::Json);
+        tab.prepare_run();
+        assert_eq!(tab.decks.len(), 3);
+        assert!(tab.decks[1].pinned);
+        assert!(tab.decks[1].preview.is_some());
+        assert!(tab.decks[2].preview.is_none());
+        assert_eq!(tab.decks[2].label, "Result 5");
     }
 }
 

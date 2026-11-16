@@ -47,7 +47,7 @@ Segmented control at the top right of the toolbar:
 - The editor can hold **multiple statements**; running produces **stacked result sections, one per statement**.
 - A result can be pinned. While the current result is pinned, the next run opens another result. Result tabs switch between them. Unpinning a result removes it. An unpinned result is replaced by the next run.
 - Each section header: statement number, short SQL snippet, row count and elapsed time.
-- SELECT → results grid. Column headers use the same color as column names in the schema tree. Each column's values are colored by its type from the selected theme: numbers, text, dates, enums, and other types. Null stays muted. A JSON cell is a button showing at most 10 characters of the value, then `....` when the value is longer. The button opens a tree of that JSON. **DML (UPDATE/INSERT/DELETE) → "N rows affected"** (no grid).
+- SELECT → results grid. Column headers use the same color as column names in the schema tree. Each column's values are colored by its type from the selected theme: numbers, text, dates, enums, and other types. Null stays muted. A JSON cell shows at most 10 characters, then `...` when the value is longer. A VARCHAR or TEXT cell shows at most 50 characters, then `...` when the value is longer. Double-click a JSON cell, or a VARCHAR or TEXT cell longer than 50 characters, to open it in the results area. The source row is above the value, and the opened cell reads `below...`. JSON objects and arrays expand and collapse, and values are colored by type. Pin keeps that view open when a query runs or another cell opens. **DML (UPDATE/INSERT/DELETE) → "N rows affected"** (no grid).
 - The results column scrolls when the sections overflow.
 
 ## Errors & status footer

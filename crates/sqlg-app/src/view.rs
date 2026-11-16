@@ -4,7 +4,7 @@ use sqlg_mysql::SchemaSnapshot;
 
 use crate::logic::{self, ColumnMark, Panes};
 use crate::message::{DragKind, Field, Message};
-use crate::model::{Modal, ResultSection};
+use crate::model::{CellKind, Modal, ResultSection};
 use crate::runtime;
 use crate::theme;
 
@@ -122,16 +122,21 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .grid .tone-other { color: var(--syn-comment); }
 .grid td.num { text-align: right; }
 .grid td.null { color: var(--muted); font-style: italic; }
-.grid button.json { padding: 1px 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dialog.json { display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
-.dialog.json .tree { flex: none; min-height: 120px; max-height: min(480px, calc(100vh - 180px)); overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--editor); }
-.dialog.json .val { margin-left: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.dialog.json .j-str { color: var(--syn-string); }
-.dialog.json .j-num { color: var(--syn-number); }
-.dialog.json .j-bool { color: var(--syn-keyword); }
-.dialog.json .j-null { color: var(--muted); font-style: italic; }
-.dialog.json .j-obj, .dialog.json .j-arr { color: var(--muted); }
-.dialog.json pre { margin: 0; max-height: min(480px, calc(100vh - 180px)); overflow: auto; white-space: pre-wrap; color: var(--readable); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.grid td.openable { cursor: pointer; }
+.cell-view { display: flex; flex-direction: column; min-height: 100%; }
+.cell-view .bar { display: flex; justify-content: flex-end; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.cell-view .source { overflow: auto; border-bottom: 1px solid var(--line); }
+.cell-view .source .grid { margin: 8px; }
+.cell-view .tree { flex: 1; min-height: 160px; overflow: auto; }
+.cell-view .tn { height: auto; min-height: 24px; align-items: flex-start; white-space: normal; }
+.cell-view .nm { flex: none; overflow: visible; }
+.cell-view .val { margin-left: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cell-view .j-str { color: var(--syn-string); }
+.cell-view .j-num { color: var(--syn-number); }
+.cell-view .j-bool { color: var(--syn-keyword); }
+.cell-view .j-null { color: var(--muted); font-style: italic; }
+.cell-view .j-obj, .cell-view .j-arr { color: var(--muted); }
+.cell-view pre { margin: 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--syn-string); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .col-sash { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
 .placeholder, .muted { color: var(--muted); padding: 8px; }
 .footer .summary { flex: 1; text-align: center; color: var(--muted); }
@@ -748,6 +753,8 @@ fn DiagnosticRow(window_id: u64, tab_id: Option<String>, item: DiagnosticView) -
 
 #[component]
 fn ResultsPane(window_id: u64, view: ShellView) -> Element {
+    let showing_preview = view.preview.is_some();
+    let preview = view.preview.clone();
     rsx! {
         section { class: "results",
             if !view.decks.is_empty() {
@@ -758,24 +765,29 @@ fn ResultsPane(window_id: u64, view: ShellView) -> Element {
                 }
             }
             div { class: "result-scroll",
-                if view.results.is_empty() && view.restored {
+                if let Some(preview) = preview {
+                    CellPreviewPane { window_id, tab_id: view.tab_id.clone(), preview }
+                }
+                if !showing_preview && view.results.is_empty() && view.restored {
                     p { class: "placeholder", "Run to see results" }
                 }
-                for section in view.results.clone() {
-                    ResultBlock { window_id, tab_id: view.tab_id.clone(), section }
-                }
-                if view.more_rows {
-                    button {
-                        onclick: {
-                            let tab_id = view.tab_id.clone();
-                            move |_| {
-                                let Some(tab_id) = tab_id.clone() else {
-                                    return;
-                                };
-                                runtime::apply(Message::ShowMore { window: window_id, tab: tab_id });
-                            }
-                        },
-                        "Show more"
+                if !showing_preview {
+                    for section in view.results.clone() {
+                        ResultBlock { window_id, tab_id: view.tab_id.clone(), section }
+                    }
+                    if view.more_rows {
+                        button {
+                            onclick: {
+                                let tab_id = view.tab_id.clone();
+                                move |_| {
+                                    let Some(tab_id) = tab_id.clone() else {
+                                        return;
+                                    };
+                                    runtime::apply(Message::ShowMore { window: window_id, tab: tab_id });
+                                }
+                            },
+                            "Show more"
+                        }
                     }
                 }
             }
@@ -875,11 +887,12 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                         }
                     }
                     tbody {
-                        for row in section.rows.clone() {
+                        for (row_index, row) in section.rows.clone().into_iter().enumerate() {
                             tr {
-                                for cell in row {
+                                for (column_index, cell) in row.into_iter().enumerate() {
                                     td {
                                         class: "{cell_class(&cell)}",
+                                        title: "{cell_title(&cell)}",
                                         onclick: {
                                             let text = cell.text.clone();
                                             let json = cell.json;
@@ -889,22 +902,27 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                                                 }
                                             }
                                         },
-                                        if cell.json {
-                                            button {
-                                                class: "json",
-                                                title: "Show JSON",
-                                                onclick: {
-                                                    let text = cell.text.clone();
-                                                    move |event| {
-                                                        event.stop_propagation();
-                                                        runtime::apply(Message::ShowJson(text.clone()));
-                                                    }
-                                                },
-                                                "{logic::json_button_label(&cell.text)}"
+                                        ondoubleclick: {
+                                            let tab_id = tab_id.clone();
+                                            let section_index = section.index;
+                                            let opens = cell_opens(&cell);
+                                            move |_| {
+                                                if !opens {
+                                                    return;
+                                                }
+                                                let Some(tab_id) = tab_id.clone() else {
+                                                    return;
+                                                };
+                                                runtime::apply(Message::OpenCell {
+                                                    window: window_id,
+                                                    tab: tab_id,
+                                                    section: section_index,
+                                                    row: row_index,
+                                                    column: column_index,
+                                                });
                                             }
-                                        } else {
-                                            "{cell.text}"
-                                        }
+                                        },
+                                        "{cell_label(&cell)}"
                                     }
                                 }
                             }
@@ -929,7 +947,44 @@ fn cell_class(cell: &CellView) -> String {
     } else if cell.numeric {
         class.push_str(" num");
     }
+    if cell_opens(cell) {
+        class.push_str(" openable");
+    }
     class
+}
+
+fn cell_opens(cell: &CellView) -> bool {
+    if cell.null {
+        return false;
+    }
+    if cell.json {
+        return true;
+    }
+    cell.long_text && cell.text.chars().count() > logic::LONG_TEXT_LIMIT
+}
+
+fn cell_title(cell: &CellView) -> String {
+    if !cell_opens(cell) {
+        return String::new();
+    }
+    if cell.json {
+        "Show JSON".into()
+    } else {
+        "Show text".into()
+    }
+}
+
+fn cell_label(cell: &CellView) -> String {
+    if cell.null {
+        return cell.text.clone();
+    }
+    if cell.json {
+        return logic::json_button_label(&cell.text);
+    }
+    if cell.long_text && cell.text.chars().count() > logic::LONG_TEXT_LIMIT {
+        return logic::preview_label(&cell.text, logic::LONG_TEXT_LIMIT);
+    }
+    cell.text.clone()
 }
 
 #[component]
@@ -960,60 +1015,102 @@ fn Footer(view: ShellView) -> Element {
 }
 
 #[component]
-fn JsonModal(text: String) -> Element {
-    let mut open = use_signal(std::collections::HashSet::<String>::new);
-    let open_paths = open.read().clone();
-    let parsed = logic::json_rows(&text, &open_paths);
+fn CellPreviewPane(window_id: u64, tab_id: Option<String>, preview: CellPreviewView) -> Element {
+    let index = preview.deck_index;
+    let pinned = preview.pinned;
+    let body = preview.body.clone();
     rsx! {
-        div {
-            class: "overlay",
-            onclick: move |_| runtime::apply(Message::DismissModal),
-            div {
-                class: "dialog json",
-                onclick: move |event| event.stop_propagation(),
-                h2 { "JSON" }
-                match parsed {
-                    Some(rows) => rsx! {
-                        div { class: "tree",
-                            for row in rows {
-                                div {
-                                    class: "tn",
-                                    style: "padding-left: {8 + u32::from(row.depth) * 14}px",
-                                    onclick: {
-                                        let path = row.path.clone();
-                                        let expandable = row.expandable;
-                                        move |_| {
-                                            if !expandable {
-                                                return;
-                                            }
-                                            let mut paths = open.write();
-                                            if !paths.insert(path.clone()) {
-                                                paths.remove(&path);
-                                            }
-                                        }
-                                    },
-                                    span { class: "cw",
-                                        if row.expandable {
-                                            {chevron_mark(row.open)}
-                                        }
-                                    }
-                                    span { class: "nm", "{row.label}" }
-                                    span { class: "val {row.kind}", "{row.value}" }
-                                }
+        div { class: "cell-view",
+            div { class: "bar",
+                button {
+                    class: "pin",
+                    onclick: {
+                        let tab_id = tab_id.clone();
+                        move |_| {
+                            let Some(tab_id) = tab_id.clone() else {
+                                return;
+                            };
+                            if pinned {
+                                runtime::apply(Message::UnpinDeck {
+                                    window: window_id,
+                                    tab: tab_id,
+                                    index,
+                                });
+                            } else {
+                                runtime::apply(Message::PinDeck {
+                                    window: window_id,
+                                    tab: tab_id,
+                                    index,
+                                });
                             }
                         }
                     },
-                    None => rsx! {
-                        p { class: "muted", "This value is not JSON." }
-                        pre { "{text}" }
-                    },
+                    if pinned { "Unpin" } else { "Pin" }
                 }
-                div { class: "actions",
-                    button {
-                        onclick: move |_| runtime::apply(Message::DismissModal),
-                        "Close"
+            }
+            div { class: "source",
+                table { class: "grid",
+                    thead {
+                        tr {
+                            for column in preview.columns.clone() {
+                                th { style: "width: {column.width}px; min-width: {column.width}px",
+                                    "{column.name}"
+                                }
+                            }
+                        }
+                    }
+                    tbody {
+                        tr {
+                            for cell in preview.cells.clone() {
+                                td { class: "{cell_class(&cell)}", "{cell_label(&cell)}" }
+                            }
+                        }
                     }
                 }
+            }
+            match body {
+                PreviewBody::Json(rows) => rsx! {
+                    div { class: "tree",
+                        for row in rows {
+                            div {
+                                class: "tn",
+                                style: "padding-left: {8 + u32::from(row.depth) * 14}px",
+                                onclick: {
+                                    let tab_id = tab_id.clone();
+                                    let path = row.path.clone();
+                                    let expandable = row.expandable;
+                                    move |_| {
+                                        if !expandable {
+                                            return;
+                                        }
+                                        let Some(tab_id) = tab_id.clone() else {
+                                            return;
+                                        };
+                                        runtime::apply(Message::ToggleCellNode {
+                                            window: window_id,
+                                            tab: tab_id,
+                                            path: path.clone(),
+                                        });
+                                    }
+                                },
+                                span { class: "cw",
+                                    if row.expandable {
+                                        {chevron_mark(row.open)}
+                                    }
+                                }
+                                span { class: "nm", "{row.label}" }
+                                span { class: "val {row.kind}", "{row.value}" }
+                            }
+                        }
+                    }
+                },
+                PreviewBody::Raw(text) => rsx! {
+                    p { class: "muted", "This value is not JSON." }
+                    pre { "{text}" }
+                },
+                PreviewBody::Text(text) => rsx! {
+                    pre { "{text}" }
+                },
             }
         }
     }
@@ -1047,9 +1144,6 @@ fn ModalLayer(view: ShellView) -> Element {
                         }
                     }
                 }
-            },
-            ModalView::Json(text) => rsx! {
-                JsonModal { text }
             },
             ModalView::Connections(form) => rsx! {
                 div {
@@ -1177,6 +1271,7 @@ struct ShellView {
     diagnostics: Vec<DiagnosticView>,
     decks: Vec<DeckView>,
     results: Vec<SectionView>,
+    preview: Option<CellPreviewView>,
     more_rows: bool,
     restored: bool,
     footer: String,
@@ -1235,6 +1330,7 @@ struct FixView {
 
 #[derive(Clone, PartialEq)]
 struct SectionView {
+    index: usize,
     sql: String,
     error: Option<String>,
     summary: String,
@@ -1250,6 +1346,7 @@ struct ColumnView {
     numeric: bool,
     tone: String,
     json: bool,
+    long_text: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1259,13 +1356,29 @@ struct CellView {
     numeric: bool,
     tone: String,
     json: bool,
+    long_text: bool,
+}
+
+#[derive(Clone, PartialEq)]
+struct CellPreviewView {
+    pinned: bool,
+    deck_index: usize,
+    columns: Vec<ColumnView>,
+    cells: Vec<CellView>,
+    body: PreviewBody,
+}
+
+#[derive(Clone, PartialEq)]
+enum PreviewBody {
+    Json(Vec<logic::JsonRow>),
+    Raw(String),
+    Text(String),
 }
 
 #[derive(Clone, PartialEq)]
 enum ModalView {
     None,
     Close { many: bool },
-    Json(String),
     Connections(ConnectionView),
 }
 
@@ -1396,10 +1509,20 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
         .map(|item| {
             item.results
                 .iter()
-                .map(|section| section_view(section, show_rows, &widths))
+                .enumerate()
+                .map(|(index, section)| section_view(section, index, show_rows, &widths))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let preview = tab.and_then(|item| {
+        if item.decks.is_empty() {
+            return None;
+        }
+        let index = item.active_deck.min(item.decks.len() - 1);
+        item.decks
+            .get(index)
+            .and_then(|deck| cell_preview_view(deck, index, &widths))
+    });
     let more_rows = deck.is_some_and(|item| {
         item.results
             .iter()
@@ -1410,7 +1533,6 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
         Modal::Close(prompt) => ModalView::Close {
             many: prompt.quit || prompt.tab_ids.len() > 1,
         },
-        Modal::Json(text) => ModalView::Json(text.clone()),
         Modal::Connections(form) => ModalView::Connections(ConnectionView {
             generation: app.form_generation,
             names: app.connection_names.clone(),
@@ -1460,6 +1582,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
         diagnostics,
         decks,
         results,
+        preview,
         more_rows,
         restored: tab.is_some_and(|item| item.restored),
         footer: deck.map(|item| item.footer.clone()).unwrap_or_default(),
@@ -1550,19 +1673,14 @@ fn schema_nodes(
 
 fn section_view(
     section: &ResultSection,
+    index: usize,
     show_rows: usize,
     widths: &std::collections::BTreeMap<String, f64>,
 ) -> SectionView {
     let columns = section
         .columns
         .iter()
-        .map(|column| ColumnView {
-            name: column.name.clone(),
-            width: widths.get(&column.name).copied().unwrap_or(140.0),
-            numeric: column.numeric,
-            tone: logic::column_tone(&column.type_name, "").into(),
-            json: logic::is_json_column(&column.type_name),
-        })
+        .map(|column| column_view(column, widths))
         .collect::<Vec<_>>();
     let rows = section
         .rows
@@ -1571,30 +1689,7 @@ fn section_view(
         .map(|row| {
             row.iter()
                 .enumerate()
-                .map(|(index, cell)| {
-                    let column = columns.get(index);
-                    let numeric = column.is_some_and(|column| column.numeric);
-                    let tone = column
-                        .map(|column| column.tone.clone())
-                        .unwrap_or_else(|| "other".into());
-                    let json = column.is_some_and(|column| column.json);
-                    match cell {
-                        Some(text) => CellView {
-                            text: text.clone(),
-                            null: false,
-                            numeric,
-                            tone,
-                            json,
-                        },
-                        None => CellView {
-                            text: "null".into(),
-                            null: true,
-                            numeric,
-                            tone,
-                            json: false,
-                        },
-                    }
-                })
+                .map(|(index, cell)| displayed_cell(columns.get(index), cell))
                 .collect()
         })
         .collect();
@@ -1610,6 +1705,7 @@ fn section_view(
         (false, false) => format!("{affected} · {elapsed}"),
     };
     SectionView {
+        index,
         sql: logic::truncate(&logic::collapse(&section.sql), 180),
         error: section.error.clone(),
         summary,
@@ -1617,6 +1713,95 @@ fn section_view(
         columns,
         rows,
     }
+}
+
+fn column_view(
+    column: &sqlg_mysql::ColumnInfo,
+    widths: &std::collections::BTreeMap<String, f64>,
+) -> ColumnView {
+    ColumnView {
+        name: column.name.clone(),
+        width: widths.get(&column.name).copied().unwrap_or(140.0),
+        numeric: column.numeric,
+        tone: logic::column_tone(&column.type_name, "").into(),
+        json: logic::is_json_column(&column.type_name),
+        long_text: logic::is_long_text_column(&column.type_name),
+    }
+}
+
+fn displayed_cell(column: Option<&ColumnView>, value: &Option<String>) -> CellView {
+    let numeric = column.is_some_and(|column| column.numeric);
+    let tone = column
+        .map(|column| column.tone.clone())
+        .unwrap_or_else(|| "other".into());
+    let json = column.is_some_and(|column| column.json);
+    let long_text = column.is_some_and(|column| column.long_text);
+    match value {
+        Some(text) => CellView {
+            text: text.clone(),
+            null: false,
+            numeric,
+            tone,
+            json,
+            long_text,
+        },
+        None => CellView {
+            text: "null".into(),
+            null: true,
+            numeric,
+            tone,
+            json: false,
+            long_text: false,
+        },
+    }
+}
+
+fn cell_preview_view(
+    deck: &crate::model::ResultDeck,
+    deck_index: usize,
+    widths: &std::collections::BTreeMap<String, f64>,
+) -> Option<CellPreviewView> {
+    let preview = deck.preview.as_ref()?;
+    let columns = preview
+        .columns
+        .iter()
+        .map(|column| column_view(column, widths))
+        .collect::<Vec<_>>();
+    let cells = preview
+        .values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let mut cell = displayed_cell(columns.get(index), value);
+            if index == preview.column {
+                cell.text = "below...".into();
+                cell.null = false;
+                cell.json = false;
+                cell.long_text = false;
+                cell.numeric = false;
+            }
+            cell
+        })
+        .collect();
+    let text = preview
+        .values
+        .get(preview.column)
+        .and_then(|value| value.clone())
+        .unwrap_or_default();
+    let body = match preview.kind {
+        CellKind::Json => match logic::json_rows(&text, &preview.open) {
+            Some(rows) => PreviewBody::Json(rows),
+            None => PreviewBody::Raw(text),
+        },
+        CellKind::Text => PreviewBody::Text(text),
+    };
+    Some(CellPreviewView {
+        pinned: deck.pinned,
+        deck_index,
+        columns,
+        cells,
+        body,
+    })
 }
 
 #[derive(Clone, PartialEq)]

@@ -752,6 +752,10 @@ impl Tab {
     }
 
     pub fn unpin_deck(&mut self, index: usize) {
+        self.close_deck(index);
+    }
+
+    pub fn close_deck(&mut self, index: usize) {
         if index >= self.decks.len() {
             return;
         }
@@ -1250,6 +1254,47 @@ mod tests {
         tab.unpin_deck(0);
         assert_eq!(tab.decks.len(), 2);
         assert!(tab.decks.iter().all(|deck| deck.id != 1));
+    }
+
+    #[test]
+    fn close_deck_removes_a_result_or_a_view() {
+        let mut tab = Tab::fresh();
+        tab.prepare_run("select id from trips");
+        tab.pin_deck(0);
+        tab.prepare_run("select id from drivers");
+        assert_eq!(tab.decks.len(), 2);
+        assert_eq!(tab.active_deck, 1);
+        tab.close_deck(1);
+        assert_eq!(tab.decks.len(), 1);
+        assert!(tab.decks[0].pinned);
+        assert_eq!(tab.active_deck, 0);
+        tab.close_deck(0);
+        assert!(tab.decks.is_empty());
+        assert_eq!(tab.active_deck, 0);
+
+        tab.prepare_run("select payload from TRIP_DATA");
+        tab.decks[0].results.push(ResultSection {
+            sql: "select payload from TRIP_DATA".into(),
+            columns: vec![ColumnInfo {
+                name: "payload".into(),
+                type_name: "json".into(),
+                numeric: false,
+            }],
+            rows: vec![vec![Some(r#"{"a":1}"#.into())]],
+            error: None,
+            rows_affected: None,
+            elapsed_ms: None,
+            truncated: false,
+        });
+        assert!(tab.open_cell(0, 0, 0));
+        assert_eq!(tab.decks.len(), 2);
+        assert!(tab.decks[1].preview.is_some());
+        tab.close_deck(1);
+        assert_eq!(tab.decks.len(), 1);
+        assert!(tab.decks[0].preview.is_none());
+        assert_eq!(tab.active_deck, 0);
+        tab.close_deck(4);
+        assert_eq!(tab.decks.len(), 1);
     }
 
     #[test]

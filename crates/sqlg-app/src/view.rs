@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-use sqlg_core::{SqlTone, highlight_sql};
 use sqlg_mysql::SchemaSnapshot;
 
 use crate::logic::{self, ColumnMark, Panes};
@@ -9,6 +8,7 @@ use crate::runtime;
 use crate::theme;
 
 const EDITOR_ID: &str = "sql-editor";
+const GUTTER_ID: &str = "sql-gutter";
 
 const LAYOUTS: &[(&str, &str)] = &[
     ("all", "All"),
@@ -95,11 +95,9 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .sash { flex: 0 0 6px; background: var(--line); cursor: col-resize; }
 .sash.row { cursor: row-resize; }
 .editor-pane, .results { display: flex; flex-direction: column; background: var(--editor); }
-.sql-editor { position: relative; flex: 1; min-height: 0; }
-.sql-highlight, .sql-editor textarea { box-sizing: border-box; margin: 0; padding: 8px; border: 0; width: 100%; height: 100%; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: normal; tab-size: 4; }
-.sql-highlight { position: absolute; inset: 0; overflow: auto; pointer-events: none; color: transparent; background: transparent; }
-.sql-highlight::-webkit-scrollbar { display: none; }
-.sql-editor textarea { position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: var(--readable); caret-color: var(--readable); }
+.sql-editor { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
+.sql-gutter { box-sizing: border-box; flex: none; align-self: stretch; height: 100%; min-width: 3.5em; min-height: 0; margin: 0; overflow: hidden; padding: 8px 8px 8px 10px; border: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--muted); text-align: right; user-select: none; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+.sql-editor textarea { box-sizing: border-box; margin: 0; padding: 8px; border: 0; flex: 1; width: auto; height: 100%; min-width: 0; min-height: 0; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; tab-size: 4; position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: var(--readable); caret-color: var(--readable); }
 .sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--readable); }
 .diagnostics, .banner { padding: 4px 8px; background: var(--panel); border-top: 1px solid var(--line); }
 .diagnostic { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
@@ -111,6 +109,13 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .deck { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 4px; padding: 2px; }
 .deck.active { background: var(--chip); border-color: var(--line); }
 .deck button { padding: 1px 6px; }
+button.pin, button.dismiss { display: inline-flex; align-items: center; justify-content: center; padding: 2px 4px; line-height: 0; }
+button.pin.on { border-color: var(--accent); }
+.ic.pin { color: var(--muted); }
+button.pin.on .ic.pin { color: var(--accent); }
+button.dismiss { color: var(--muted); }
+button.dismiss:hover { color: var(--danger); border-color: var(--danger); }
+.ic.dismiss { color: inherit; }
 .section { margin: 8px; }
 .grid { border-collapse: collapse; font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; position: relative; }
@@ -509,6 +514,52 @@ fn SchemaNode(window_id: u64, tab_id: Option<String>, node: SchemaNodeView) -> E
     }
 }
 
+fn close_mark() -> Element {
+    rsx! {
+        svg {
+            class: "ic dismiss",
+            width: "14",
+            height: "14",
+            view_box: "0 0 16 16",
+            path {
+                d: "M4 4l8 8M12 4L4 12",
+                fill: "none",
+                stroke: "currentColor",
+                stroke_width: "1.4",
+                stroke_linecap: "round",
+            }
+        }
+    }
+}
+
+fn thumbtack_mark(pinned: bool) -> Element {
+    let class = if pinned { "ic pin on" } else { "ic pin" };
+    rsx! {
+        svg {
+            class: "{class}",
+            width: "14",
+            height: "14",
+            view_box: "0 0 16 16",
+            ellipse {
+                cx: "8",
+                cy: "4.4",
+                rx: "4.1",
+                ry: "2.5",
+                fill: if pinned { "currentColor" } else { "none" },
+                stroke: "currentColor",
+                stroke_width: "1.2",
+            }
+            path {
+                d: "M8 6.9V14",
+                fill: "none",
+                stroke: "currentColor",
+                stroke_width: "1.2",
+                stroke_linecap: "round",
+            }
+        }
+    }
+}
+
 fn chevron_mark(open: bool) -> Element {
     rsx! {
         svg {
@@ -644,6 +695,8 @@ fn EditorPane(window_id: u64, view: ShellView) -> Element {
 #[component]
 fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
     let _revision = revision;
+    let line_count = count_editor_lines(&editor_text(window_id, &tab_id));
+    let line_numbers = format_editor_line_numbers(line_count);
     let initial = use_hook({
         let tab_id = tab_id.clone();
         move || editor_text(window_id, &tab_id)
@@ -656,23 +709,24 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
             place_caret(anchor, head).await;
         });
     });
-    let sql = editor_text(window_id, &tab_id);
-    let pieces = highlight_sql(&sql);
-    let ends_with_newline = sql.ends_with('\n');
-    use_effect(use_reactive(&sql, |_| {
+    use_effect(use_reactive(&line_count, move |_| {
         spawn(async move {
-            sync_highlight_scroll().await;
+            align_editor_gutter().await;
         });
     }));
     rsx! {
-        div { class: "sql-editor",
-            pre { id: "sql-highlight", aria_hidden: "true",
-                for piece in pieces {
-                    span { class: tone_class(piece.tone), "{piece.text}" }
-                }
-                if ends_with_newline {
-                    br {}
-                }
+        div {
+            class: "sql-editor",
+            onmounted: move |_| {
+                spawn(async move {
+                    align_editor_gutter().await;
+                });
+            },
+            pre {
+                id: GUTTER_ID,
+                class: "sql-gutter",
+                aria_hidden: "true",
+                "{line_numbers}"
             }
             textarea {
                 id: EDITOR_ID,
@@ -689,11 +743,6 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
                         });
                     }
                 },
-                onscroll: move |_| {
-                    spawn(async move {
-                        sync_highlight_scroll().await;
-                    });
-                },
                 onselect: {
                     let tab_id = tab_id.clone();
                     move |_| {
@@ -706,17 +755,6 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
                 "{initial}"
             }
         }
-    }
-}
-
-fn tone_class(tone: SqlTone) -> &'static str {
-    match tone {
-        SqlTone::Plain => "",
-        SqlTone::Keyword => "sql-kw",
-        SqlTone::String => "sql-str",
-        SqlTone::Number => "sql-num",
-        SqlTone::Comment => "sql-com",
-        SqlTone::Operator => "sql-op",
     }
 }
 
@@ -800,6 +838,11 @@ fn ResultsPane(window_id: u64, view: ShellView) -> Element {
 fn DeckChip(window_id: u64, tab_id: Option<String>, deck: DeckView) -> Element {
     let index = deck.index;
     let pinned = deck.pinned;
+    let close_label = if deck.preview {
+        "Close view"
+    } else {
+        "Close result"
+    };
     let class = if deck.active { "deck active" } else { "deck" };
     rsx! {
         div { class: "{class}",
@@ -820,7 +863,9 @@ fn DeckChip(window_id: u64, tab_id: Option<String>, deck: DeckView) -> Element {
                 "{deck.label}"
             }
             button {
-                class: "pin",
+                class: if pinned { "pin on" } else { "pin" },
+                aria_label: if pinned { "Unpin" } else { "Pin" },
+                title: if pinned { "Unpin" } else { "Pin" },
                 onclick: {
                     let tab_id = tab_id.clone();
                     move |event| {
@@ -843,8 +888,45 @@ fn DeckChip(window_id: u64, tab_id: Option<String>, deck: DeckView) -> Element {
                         }
                     }
                 },
-                if pinned { "Unpin" } else { "Pin" }
+                {thumbtack_mark(pinned)}
             }
+            CloseDeckButton {
+                window_id,
+                tab_id: tab_id.clone(),
+                index,
+                label: close_label,
+            }
+        }
+    }
+}
+
+#[component]
+fn CloseDeckButton(
+    window_id: u64,
+    tab_id: Option<String>,
+    index: usize,
+    label: &'static str,
+) -> Element {
+    rsx! {
+        button {
+            class: "dismiss",
+            aria_label: "{label}",
+            title: "{label}",
+            onclick: {
+                let tab_id = tab_id.clone();
+                move |event| {
+                    event.stop_propagation();
+                    let Some(tab_id) = tab_id.clone() else {
+                        return;
+                    };
+                    runtime::apply(Message::CloseDeck {
+                        window: window_id,
+                        tab: tab_id,
+                        index,
+                    });
+                }
+            },
+            {close_mark()}
         }
     }
 }
@@ -1037,7 +1119,9 @@ fn CellPreviewPane(window_id: u64, tab_id: Option<String>, preview: CellPreviewV
         div { class: "cell-view",
             div { class: "bar",
                 button {
-                    class: "pin",
+                    class: if pinned { "pin on" } else { "pin" },
+                    aria_label: if pinned { "Unpin" } else { "Pin" },
+                    title: if pinned { "Unpin" } else { "Pin" },
                     onclick: {
                         let tab_id = tab_id.clone();
                         move |_| {
@@ -1059,7 +1143,13 @@ fn CellPreviewPane(window_id: u64, tab_id: Option<String>, preview: CellPreviewV
                             }
                         }
                     },
-                    if pinned { "Unpin" } else { "Pin" }
+                    {thumbtack_mark(pinned)}
+                }
+                CloseDeckButton {
+                    window_id,
+                    tab_id: tab_id.clone(),
+                    index,
+                    label: "Close view",
                 }
             }
             div { class: "source",
@@ -1522,6 +1612,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
                     label: deck.label.clone(),
                     pinned: deck.pinned,
                     active: index == active,
+                    preview: deck.preview.is_some(),
                 })
                 .collect::<Vec<_>>()
         })
@@ -1843,6 +1934,7 @@ struct DeckView {
     label: String,
     pinned: bool,
     active: bool,
+    preview: bool,
 }
 
 fn claim_command(command: &str) -> bool {
@@ -2133,19 +2225,6 @@ dioxus.send(true);"#,
     let _ = eval.recv::<bool>().await;
 }
 
-async fn sync_highlight_scroll() {
-    let mut eval = document::eval(
-        r#"let area = document.getElementById("sql-editor");
-let back = document.getElementById("sql-highlight");
-if (area && back) {
-  back.scrollTop = area.scrollTop;
-  back.scrollLeft = area.scrollLeft;
-}
-dioxus.send(true);"#,
-    );
-    let _ = eval.recv::<bool>().await;
-}
-
 async fn place_caret(anchor: u32, head: u32) {
     let mut eval = document::eval(&format!(
         r#"let node = document.getElementById("sql-editor");
@@ -2157,6 +2236,40 @@ if (node) {{
   dioxus.send(false);
 }}"#
     ));
+    let _ = eval.recv::<bool>().await;
+}
+
+fn count_editor_lines(text: &str) -> usize {
+    text.matches('\n').count() + 1
+}
+
+fn format_editor_line_numbers(line_count: usize) -> String {
+    let mut line_numbers = String::new();
+    for line_number in 1..=line_count.max(1) {
+        if line_number > 1 {
+            line_numbers.push('\n');
+        }
+        line_numbers.push_str(&line_number.to_string());
+    }
+    line_numbers
+}
+
+async fn align_editor_gutter() {
+    let mut eval = document::eval(
+        r#"const editor = document.getElementById("sql-editor");
+const gutter = document.getElementById("sql-gutter");
+if (editor && gutter) {
+  if (!editor.dataset.gutterBound) {
+    editor.dataset.gutterBound = "1";
+    editor.addEventListener("scroll", () => {
+      const current = document.getElementById("sql-gutter");
+      if (current) current.scrollTop = editor.scrollTop;
+    }, { passive: true });
+  }
+  gutter.scrollTop = editor.scrollTop;
+}
+dioxus.send(true);"#,
+    );
     let _ = eval.recv::<bool>().await;
 }
 
@@ -2195,5 +2308,22 @@ fn form_value(field: Field) -> String {
         Field::Password => form.password.clone(),
         Field::Schema => form.schema.clone(),
         Field::Color => form.color.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_editor_lines, format_editor_line_numbers};
+
+    #[test]
+    fn editor_line_numbers_follow_newlines() {
+        assert_eq!(count_editor_lines(""), 1);
+        assert_eq!(format_editor_line_numbers(1), "1");
+        assert_eq!(count_editor_lines("select 1"), 1);
+        assert_eq!(count_editor_lines("select 1\n"), 2);
+        assert_eq!(format_editor_line_numbers(2), "1\n2");
+        assert_eq!(count_editor_lines("a\r\nb\r\nc"), 3);
+        assert_eq!(format_editor_line_numbers(3), "1\n2\n3");
+        assert_eq!(count_editor_lines("a\n\nb"), 3);
     }
 }

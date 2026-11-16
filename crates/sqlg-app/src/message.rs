@@ -179,6 +179,11 @@ pub enum Message {
         tab: String,
         index: usize,
     },
+    CloseDeck {
+        window: u64,
+        tab: String,
+        index: usize,
+    },
     OpenConnections(u64),
     FormNew,
     FormPick(String),

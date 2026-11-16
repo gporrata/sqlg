@@ -250,6 +250,12 @@ pub fn update(app: &mut App, message: Message) -> Vec<Effect> {
             }
             Vec::new()
         }
+        Message::CloseDeck { window, tab, index } => {
+            if let Some(tab) = app.tab_mut(window, &tab) {
+                tab.close_deck(index);
+            }
+            Vec::new()
+        }
         Message::OpenConnections(window) => {
             if app.blocks_shortcuts() {
                 return Vec::new();

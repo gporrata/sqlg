@@ -28,7 +28,7 @@ Every tab shows a **connection badge** (a pill with the connection name, colored
 ## Tab layout
 Three columns per tab:
 1. **Schema tree** – schemas › tables › columns (with column types).
-2. **SQL editor** – a monospace textarea with no line-number gutter and no syntax coloring, plus a Run button.
+2. **SQL editor** – a monospace textarea with a line-number gutter and no syntax coloring, plus a Run button. Long lines scroll sideways so each number stays on its line.
 3. **Results**.
 
 ### Layout ("chiclet") control

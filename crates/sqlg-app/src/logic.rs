@@ -17,6 +17,9 @@ pub const EDITOR_MIN: f32 = 220.0;
 pub const EDITOR_MAX: f32 = 1200.0;
 pub const EDITOR_HEIGHT_MIN: f32 = 140.0;
 pub const EDITOR_HEIGHT_MAX: f32 = 800.0;
+pub const SASH_SIZE: f32 = 5.0;
+pub const RESULTS_MIN: f32 = 120.0;
+pub const PANE_CHROME: f32 = 76.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Panes {
@@ -92,6 +95,35 @@ pub fn known_layout(layout: &str) -> bool {
 pub fn clamp_pane(size: f32, min: f32, max: f32) -> f32 {
     let upper = min.max(max);
     size.clamp(min, upper)
+}
+
+pub fn style_editor_pane(stack: bool, beside_results: bool, width: f32, height: f32) -> String {
+    if stack {
+        format!(
+            "flex: 0 1 {height}px; height: {height}px; min-height: {EDITOR_HEIGHT_MIN}px; max-height: {height}px"
+        )
+    } else if beside_results {
+        format!(
+            "flex: 0 1 {width}px; width: {width}px; min-width: {EDITOR_MIN}px; max-width: {width}px"
+        )
+    } else {
+        "flex: 1 1 auto; min-width: 0; min-height: 0".to_string()
+    }
+}
+
+pub fn limit_editor_width(window_width: f32, schema_width: f32, show_schema: bool) -> f32 {
+    let schema_span = if show_schema {
+        schema_width + SASH_SIZE
+    } else {
+        0.0
+    };
+    let room = window_width - schema_span - SASH_SIZE - RESULTS_MIN;
+    clamp_pane(room, EDITOR_MIN, EDITOR_MAX)
+}
+
+pub fn limit_editor_height(window_height: f32) -> f32 {
+    let room = window_height - PANE_CHROME - SASH_SIZE - RESULTS_MIN;
+    clamp_pane(room, EDITOR_HEIGHT_MIN, EDITOR_HEIGHT_MAX)
 }
 
 pub fn pane_size(value: Option<f64>, fallback: f32, min: f32) -> f32 {
@@ -1378,10 +1410,28 @@ mod tests {
     #[test]
     fn layouts_and_badges() {
         assert!(layout_panes("all").schema);
+        assert!(!layout_panes("all").stack);
+        assert!(layout_panes("below").schema);
         assert!(layout_panes("below").stack);
+        assert!(layout_panes("below-only").stack);
+        assert!(!layout_panes("below-only").schema);
         assert!(!layout_panes("editor").results);
         assert!(!layout_panes("results").editor);
         assert!(!layout_panes("editor-results").schema);
+        assert!(!layout_panes("editor-results").stack);
+        let beside = style_editor_pane(false, true, 520.0, 320.0);
+        assert!(beside.contains("flex: 0 1 520px"));
+        assert!(beside.contains("max-width: 520px"));
+        assert!(!beside.contains("flex: 1 "));
+        let stacked = style_editor_pane(true, true, 520.0, 320.0);
+        assert!(stacked.contains("flex: 0 1 320px"));
+        assert!(stacked.contains("max-height: 320px"));
+        assert!(style_editor_pane(false, false, 520.0, 320.0).contains("flex: 1 1 auto"));
+        assert_eq!(limit_editor_width(1200.0, 250.0, true), 820.0);
+        assert_eq!(limit_editor_width(1000.0, 250.0, false), 875.0);
+        assert_eq!(limit_editor_width(400.0, 250.0, true), EDITOR_MIN);
+        assert_eq!(limit_editor_height(800.0), 599.0);
+        assert_eq!(limit_editor_height(300.0), EDITOR_HEIGHT_MIN);
         assert_eq!(clamp_pane(10.0, 160.0, 600.0), 160.0);
         assert_eq!(badge_color("prod-main", None), "#c0392b");
         assert_eq!(badge_color("local", Some("#112233")), "#112233");

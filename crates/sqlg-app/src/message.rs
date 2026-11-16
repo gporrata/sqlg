@@ -23,7 +23,7 @@ pub enum FilePurpose {
     SaveSelection { text: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DragKind {
     Schema,
     EditorWidth,

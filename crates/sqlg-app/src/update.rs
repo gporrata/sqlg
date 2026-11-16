@@ -1011,32 +1011,42 @@ fn on_drag(app: &mut App, x: f32, y: f32) -> Vec<Effect> {
         let Some(drag) = app.drag.as_ref() else {
             return Vec::new();
         };
-        let axis = if drag.horizontal { x } else { y };
-        let delta = axis - drag.origin;
-        let next = match &drag.kind {
-            DragKind::Schema => logic::clamp_pane(
-                drag.origin_size + delta,
-                logic::SCHEMA_MIN,
-                logic::SCHEMA_MAX,
-            ),
-            DragKind::EditorWidth => logic::clamp_pane(
-                drag.origin_size + delta,
-                logic::EDITOR_MIN,
-                logic::EDITOR_MAX,
-            ),
-            DragKind::EditorHeight => logic::clamp_pane(
-                drag.origin_size + delta,
-                logic::EDITOR_HEIGHT_MIN,
-                logic::EDITOR_HEIGHT_MAX,
-            ),
-            DragKind::Column { .. } => {
-                logic::clamp_pane(drag.origin_size + delta, logic::COLUMN_MIN as f32, 800.0)
-            }
-        };
-        Some((drag.window, drag.kind.clone(), next))
+        (
+            drag.window,
+            drag.kind.clone(),
+            drag.origin,
+            drag.origin_size,
+            drag.horizontal,
+        )
     };
-    let Some((window_id, kind, next)) = planned else {
+    let (window_id, kind, origin, origin_size, horizontal) = planned;
+    let Some(gui) = app.window(window_id) else {
         return Vec::new();
+    };
+    let layout = gui
+        .active_tab()
+        .map(|tab| tab.layout.clone())
+        .unwrap_or_else(|| "all".into());
+    let panes = logic::layout_panes(&layout);
+    let axis = if horizontal { x } else { y };
+    let delta = axis - origin;
+    let next = match &kind {
+        DragKind::Schema => {
+            logic::clamp_pane(origin_size + delta, logic::SCHEMA_MIN, logic::SCHEMA_MAX)
+        }
+        DragKind::EditorWidth => logic::clamp_pane(
+            origin_size + delta,
+            logic::EDITOR_MIN,
+            logic::limit_editor_width(gui.width as f32, gui.schema_width, panes.schema),
+        ),
+        DragKind::EditorHeight => logic::clamp_pane(
+            origin_size + delta,
+            logic::EDITOR_HEIGHT_MIN,
+            logic::limit_editor_height(gui.height as f32),
+        ),
+        DragKind::Column { .. } => {
+            logic::clamp_pane(origin_size + delta, logic::COLUMN_MIN as f32, 800.0)
+        }
     };
     let Some(gui) = app.window_mut(window_id) else {
         return Vec::new();

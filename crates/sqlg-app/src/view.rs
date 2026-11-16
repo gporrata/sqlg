@@ -43,6 +43,8 @@ button { background: var(--panel); border: 1px solid var(--line); border-radius:
 button:hover { border-color: var(--accent); }
 button.active, button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .shell { height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); }
+.shell.drag-col, .shell.drag-col * { cursor: col-resize !important; user-select: none !important; }
+.shell.drag-row, .shell.drag-row * { cursor: row-resize !important; user-select: none !important; }
 .toolbar, .footer, .tabs { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--panel); }
 .toolbar, .tabs { border-bottom: 1px solid var(--line); }
 .footer { border-top: 1px solid var(--line); }
@@ -61,10 +63,10 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .spacer { flex: 1; }
 .badge { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .missing { color: var(--danger); }
-.body { flex: 1; display: flex; min-height: 0; }
-.body.stack { flex-direction: column; }
+.body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+.split-column { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .schema, .editor-pane, .results { min-width: 0; min-height: 0; }
-.schema { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+.schema { overflow: auto; background: var(--panel); display: flex; flex-direction: column; }
 .schema .actions { display: flex; flex-direction: column; align-items: flex-start; padding: 6px; }
 .schema .actions button { text-align: left; }
 .schema .find { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: var(--editor); color: var(--readable); }
@@ -92,9 +94,21 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .shell.dark .ic.purple { color: #d7b3f5; }
 .gl { width: 14px; flex: none; text-align: center; font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ig { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); pointer-events: none; }
-.sash { flex: 0 0 6px; background: var(--line); cursor: col-resize; }
+.sash { position: relative; z-index: 4; flex: 0 0 5px; box-sizing: border-box; background: var(--line); cursor: col-resize; touch-action: none; user-select: none; }
 .sash.row { cursor: row-resize; }
+.sash.dragged { background: var(--accent); }
+.sash-line { position: absolute; pointer-events: none; background: var(--editor); }
+.sash:not(.row) .sash-line { top: 0; bottom: 0; left: 2px; width: 1px; }
+.sash.row .sash-line { left: 0; right: 0; top: 2px; height: 1px; }
+.sash::before, .sash::after { content: ""; position: absolute; background: transparent; }
+.sash:not(.row)::before, .sash:not(.row)::after { top: 0; bottom: 0; width: 10px; }
+.sash:not(.row)::before { right: 100%; }
+.sash:not(.row)::after { left: 100%; }
+.sash.row::before, .sash.row::after { left: 0; right: 0; height: 10px; }
+.sash.row::before { bottom: 100%; }
+.sash.row::after { top: 100%; }
 .editor-pane, .results { display: flex; flex-direction: column; background: var(--editor); }
+.editor-pane { overflow: hidden; }
 .sql-editor { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
 .sql-gutter { box-sizing: border-box; flex: none; align-self: stretch; min-width: 3.5em; min-height: 0; margin: 0; overflow: hidden; padding: 8px 8px 0 10px; border: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--muted); text-align: right; user-select: none; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sql-gutter-line { height: calc(13px * 1.45); line-height: calc(13px * 1.45); }
@@ -104,7 +118,7 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .diagnostic { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
 .diagnostic.warn { color: var(--warn); }
 .diagnostic.error, .error { color: var(--danger); }
-.results { overflow: hidden; flex: 1; }
+.results { overflow: hidden; flex: 1 1 120px; }
 .result-scroll { overflow: auto; flex: 1; min-height: 0; }
 .decks { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--panel); overflow: auto; flex: none; }
 .deck { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 4px; padding: 2px; }
@@ -200,8 +214,21 @@ fn Shell(window_id: u64) -> Element {
     };
     runtime::sync_chrome(window_id);
     let chosen = theme::find_theme(&view.theme);
-    let shell_class = if chosen.dark { "shell dark" } else { "shell" };
+    let drag_class = match &view.drag_kind {
+        Some(DragKind::EditorHeight) => " drag-row",
+        Some(_) => " drag-col",
+        None => "",
+    };
+    let shell_class = if chosen.dark {
+        format!("shell dark{drag_class}")
+    } else {
+        format!("shell{drag_class}")
+    };
     let shell_style = theme::css_vars(chosen);
+    let schema_dragged = matches!(view.drag_kind, Some(DragKind::Schema));
+    let width_dragged = matches!(view.drag_kind, Some(DragKind::EditorWidth));
+    let height_dragged = matches!(view.drag_kind, Some(DragKind::EditorHeight));
+    let stacked = view.panes.stack;
     rsx! {
         div {
             class: "{shell_class}",
@@ -212,33 +239,49 @@ fn Shell(window_id: u64) -> Element {
             onmouseup: move |_| runtime::apply(Message::DragEnd),
             onclick: move |_| close_menu_if_open(window_id),
             Toolbar { window_id, view: view.clone() }
-            div {
-                class: if view.panes.stack { "body stack" } else { "body" },
+            div { class: "body",
                 if view.panes.schema {
                     SchemaPane { window_id, view: view.clone() }
-                    div {
-                        class: "sash",
-                        onmousedown: move |event| start_drag(window_id, event, DragKind::Schema),
+                    Sash {
+                        window_id,
+                        kind: DragKind::Schema,
+                        row: false,
+                        dragged: schema_dragged,
                     }
                 }
-                if view.panes.editor {
-                    EditorPane { window_id, view: view.clone() }
-                }
-                if view.panes.editor && view.panes.results {
-                    div {
-                        class: if view.panes.stack { "sash row" } else { "sash" },
-                        onmousedown: move |event| {
-                            let kind = if view.panes.stack {
-                                DragKind::EditorHeight
-                            } else {
-                                DragKind::EditorWidth
-                            };
-                            start_drag(window_id, event, kind);
-                        },
+                if stacked {
+                    div { class: "split-column",
+                        if view.panes.editor {
+                            EditorPane { window_id, view: view.clone() }
+                        }
+                        if view.panes.editor && view.panes.results {
+                            Sash {
+                                window_id,
+                                kind: DragKind::EditorHeight,
+                                row: true,
+                                dragged: height_dragged,
+                            }
+                        }
+                        if view.panes.results {
+                            ResultsPane { window_id, view: view.clone() }
+                        }
                     }
                 }
-                if view.panes.results {
-                    ResultsPane { window_id, view: view.clone() }
+                if !stacked {
+                    if view.panes.editor {
+                        EditorPane { window_id, view: view.clone() }
+                    }
+                    if view.panes.editor && view.panes.results {
+                        Sash {
+                            window_id,
+                            kind: DragKind::EditorWidth,
+                            row: false,
+                            dragged: width_dragged,
+                        }
+                    }
+                    if view.panes.results {
+                        ResultsPane { window_id, view: view.clone() }
+                    }
                 }
             }
             Footer { view: view.clone() }
@@ -374,7 +417,9 @@ fn SchemaPane(window_id: u64, view: ShellView) -> Element {
         });
     }));
     rsx! {
-        aside { class: "schema", style: "width: {width}px",
+        aside {
+            class: "schema",
+            style: "flex: 0 0 {width}px; width: {width}px; max-width: {width}px",
             div { class: "actions",
                 button {
                     onclick: move |_| runtime::apply(Message::ReloadSchema { window: window_id }),
@@ -636,17 +681,12 @@ fn kind_mark(mark: NodeMark) -> Element {
 
 #[component]
 fn EditorPane(window_id: u64, view: ShellView) -> Element {
-    let width = if view.panes.stack {
-        "flex: 0 0 auto".to_string()
-    } else {
-        format!("width: {}px", view.editor_width)
-    };
-    let height = if view.panes.stack {
-        format!("height: {}px", view.editor_height)
-    } else {
-        "flex: 1".to_string()
-    };
-    let style = format!("{width}; {height}; display: flex; flex-direction: column");
+    let style = logic::style_editor_pane(
+        view.panes.stack,
+        view.panes.results,
+        view.editor_width,
+        view.editor_height,
+    );
     rsx! {
         section { class: "editor-pane", style: "{style}",
             if let Some(notice_tab) = view.disk_notice.clone() {
@@ -1362,7 +1402,7 @@ fn FormField(generation: u64, field: Field, label: &'static str, secret: bool) -
 struct ShellView {
     theme: String,
     file_menu: bool,
-    dragging: bool,
+    drag_kind: Option<DragKind>,
     tabs: Vec<TabChipView>,
     tab_id: Option<String>,
     revision: u64,
@@ -1664,7 +1704,11 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
     Some(ShellView {
         theme: app.theme_name.clone(),
         file_menu: gui.file_menu,
-        dragging: app.drag.is_some(),
+        drag_kind: app
+            .drag
+            .as_ref()
+            .filter(|drag| drag.window == window_id)
+            .map(|drag| drag.kind.clone()),
         tabs: gui
             .tabs
             .iter()
@@ -2167,7 +2211,29 @@ fn drag_move(event: Event<MouseData>) {
     });
 }
 
+fn sash_class(row: bool, dragged: bool) -> &'static str {
+    match (row, dragged) {
+        (false, false) => "sash",
+        (false, true) => "sash dragged",
+        (true, false) => "sash row",
+        (true, true) => "sash row dragged",
+    }
+}
+
+#[component]
+fn Sash(window_id: u64, kind: DragKind, row: bool, dragged: bool) -> Element {
+    let class = sash_class(row, dragged);
+    rsx! {
+        div {
+            class: "{class}",
+            onmousedown: move |event| start_drag(window_id, event, kind.clone()),
+            span { class: "sash-line" }
+        }
+    }
+}
+
 fn start_drag(window_id: u64, event: Event<MouseData>, kind: DragKind) {
+    event.prevent_default();
     event.stop_propagation();
     let point = event.client_coordinates();
     runtime::apply(Message::StartDrag {

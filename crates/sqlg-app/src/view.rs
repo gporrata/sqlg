@@ -96,7 +96,8 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .sash.row { cursor: row-resize; }
 .editor-pane, .results { display: flex; flex-direction: column; background: var(--editor); }
 .sql-editor { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
-.sql-gutter { box-sizing: border-box; flex: none; align-self: stretch; height: 100%; min-width: 3.5em; min-height: 0; margin: 0; overflow: hidden; padding: 8px 8px 8px 10px; border: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--muted); text-align: right; user-select: none; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+.sql-gutter { box-sizing: border-box; flex: none; align-self: stretch; min-width: 3.5em; min-height: 0; margin: 0; overflow: hidden; padding: 8px 8px 0 10px; border: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--muted); text-align: right; user-select: none; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sql-gutter-line { height: calc(13px * 1.45); line-height: calc(13px * 1.45); }
 .sql-editor textarea { box-sizing: border-box; margin: 0; padding: 8px; border: 0; flex: 1; width: auto; height: 100%; min-width: 0; min-height: 0; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; tab-size: 4; position: relative; display: block; resize: none; outline: none; overflow: auto; background: transparent; color: var(--readable); caret-color: var(--readable); }
 .sql-editor textarea::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--readable); }
 .diagnostics, .banner { padding: 4px 8px; background: var(--panel); border-top: 1px solid var(--line); }
@@ -679,6 +680,7 @@ fn EditorPane(window_id: u64, view: ShellView) -> Element {
                     window_id,
                     tab_id,
                     revision: view.revision,
+                    line_count: view.editor_lines,
                 }
             }
             if !view.diagnostics.is_empty() {
@@ -693,10 +695,12 @@ fn EditorPane(window_id: u64, view: ShellView) -> Element {
 }
 
 #[component]
-fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
+fn SqlEditor(window_id: u64, tab_id: String, revision: u64, line_count: usize) -> Element {
     let _revision = revision;
-    let line_count = count_editor_lines(&editor_text(window_id, &tab_id));
-    let line_numbers = format_editor_line_numbers(line_count);
+    let line_numbers = format_editor_line_numbers(line_count)
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
     let initial = use_hook({
         let tab_id = tab_id.clone();
         move || editor_text(window_id, &tab_id)
@@ -722,11 +726,13 @@ fn SqlEditor(window_id: u64, tab_id: String, revision: u64) -> Element {
                     align_editor_gutter().await;
                 });
             },
-            pre {
+            div {
                 id: GUTTER_ID,
                 class: "sql-gutter",
                 aria_hidden: "true",
-                "{line_numbers}"
+                for line_number in line_numbers {
+                    div { class: "sql-gutter-line", "{line_number}" }
+                }
             }
             textarea {
                 id: EDITOR_ID,
@@ -1360,6 +1366,7 @@ struct ShellView {
     tabs: Vec<TabChipView>,
     tab_id: Option<String>,
     revision: u64,
+    editor_lines: usize,
     connection_names: Vec<String>,
     selected_connection: String,
     connection_missing: bool,
@@ -1672,6 +1679,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
             .collect(),
         tab_id: tab.map(|item| item.id.clone()),
         revision: tab.map(|item| item.buffer.revision).unwrap_or(0),
+        editor_lines: tab.map(|item| count_editor_lines(&item.sql())).unwrap_or(1),
         connection_names: app.connection_names.clone(),
         selected_connection: selected,
         connection_missing,

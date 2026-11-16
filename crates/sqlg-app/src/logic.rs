@@ -284,7 +284,7 @@ pub fn json_button_label(text: &str) -> String {
     let mut label = String::new();
     for (index, ch) in text.chars().enumerate() {
         if index == 10 {
-            label.push_str("....");
+            label.push_str("...");
             break;
         }
         if ch.is_whitespace() {
@@ -725,7 +725,7 @@ mod tests {
         assert_eq!(json_button_label(r#"{"a":1}"#), r#"{"a":1}"#);
         assert_eq!(
             json_button_label(r#"{"abcdefghij":1}"#),
-            r#"{"abcdefgh...."#
+            r#"{"abcdefgh..."#
         );
         assert_eq!(json_button_label("{\n\"ab\"}"), "{ \"ab\"}");
     }

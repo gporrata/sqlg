@@ -139,6 +139,7 @@ pub enum Modal {
     None,
     Connections(ConnForm),
     Close(ClosePrompt),
+    Json(String),
 }
 
 pub struct ConnForm {

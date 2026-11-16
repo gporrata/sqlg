@@ -194,6 +194,7 @@ pub enum Message {
     FormTest,
     FormDelete,
     FormTested(Result<String, String>),
+    ShowJson(String),
     DismissModal,
     CloseChoice {
         save: bool,

@@ -307,6 +307,10 @@ pub fn update(app: &mut App, message: Message) -> Vec<Effect> {
             }
             Vec::new()
         }
+        Message::ShowJson(text) => {
+            app.modal = Modal::Json(text);
+            Vec::new()
+        }
         Message::DismissModal => {
             app.modal = Modal::None;
             Vec::new()

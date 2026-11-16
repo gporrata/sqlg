@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+
+use serde_json::Value;
 use sqlg_core::{LintCatalog, LintSchema, LintTable, split_statements};
 use sqlg_mysql::SchemaSnapshot;
 
@@ -330,6 +333,143 @@ pub fn find_previous_query(text: &str, caret: usize) -> usize {
         .map(|part| part.start)
         .unwrap_or(current.start)
 }
+
+const JSON_TREE_DEPTH: u8 = 32;
+
+pub fn is_json_column(type_name: &str) -> bool {
+    type_name.eq_ignore_ascii_case("json")
+}
+
+pub fn json_button_label(text: &str) -> String {
+    let mut label = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        if index == 10 {
+            label.push_str("....");
+            break;
+        }
+        if ch.is_whitespace() {
+            label.push(' ');
+        } else {
+            label.push(ch);
+        }
+    }
+    label
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonRow {
+    pub path: String,
+    pub label: String,
+    pub value: String,
+    pub kind: &'static str,
+    pub depth: u8,
+    pub expandable: bool,
+    pub open: bool,
+}
+
+pub fn json_rows(text: &str, open: &HashSet<String>) -> Option<Vec<JsonRow>> {
+    let value = serde_json::from_str::<Value>(text).ok()?;
+    let mut rows = Vec::new();
+    append_json(&value, "", 0, open, &mut rows);
+    Some(rows)
+}
+
+fn append_json(
+    value: &Value,
+    parent: &str,
+    depth: u8,
+    open: &HashSet<String>,
+    rows: &mut Vec<JsonRow>,
+) {
+    match value {
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                push_json_child(rows, parent, index, index.to_string(), child, depth, open);
+            }
+        }
+        Value::Object(map) => {
+            for (index, (key, child)) in map.iter().enumerate() {
+                push_json_child(rows, parent, index, key.clone(), child, depth, open);
+            }
+        }
+        other => rows.push(json_scalar(parent, String::new(), other, depth)),
+    }
+}
+
+fn push_json_child(
+    rows: &mut Vec<JsonRow>,
+    parent: &str,
+    index: usize,
+    label: String,
+    child: &Value,
+    depth: u8,
+    open: &HashSet<String>,
+) {
+    let path = if parent.is_empty() {
+        index.to_string()
+    } else {
+        format!("{parent}/{index}")
+    };
+    let (kind, summary, children) = match child {
+        Value::Array(items) if !items.is_empty() => ("arr", format!("[{}]", items.len()), true),
+        Value::Object(map) if !map.is_empty() => ("obj", format!("{{{}}}", map.len()), true),
+        other => {
+            rows.push(json_scalar(&path, label, other, depth));
+            return;
+        }
+    };
+    let expandable = children && depth < JSON_TREE_DEPTH;
+    let is_open = expandable && open.contains(&path);
+    rows.push(JsonRow {
+        path: path.clone(),
+        label,
+        value: summary,
+        kind,
+        depth,
+        expandable,
+        open: is_open,
+    });
+    if is_open {
+        append_json(child, &path, depth.saturating_add(1), open, rows);
+    }
+}
+
+fn json_scalar(path: &str, label: String, value: &Value, depth: u8) -> JsonRow {
+    let (text, kind) = match value {
+        Value::Null => ("null".to_string(), "j-null"),
+        Value::Bool(flag) => (flag.to_string(), "j-bool"),
+        Value::Number(number) => (number.to_string(), "j-num"),
+        Value::String(text) => (show_json_string(text), "j-str"),
+        Value::Array(_) => ("[]".to_string(), "j-arr"),
+        Value::Object(_) => ("{}".to_string(), "j-obj"),
+    };
+    JsonRow {
+        path: path.to_string(),
+        label,
+        value: text,
+        kind,
+        depth,
+        expandable: false,
+        open: false,
+    }
+}
+
+fn show_json_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub fn find_next_query(text: &str, caret: usize) -> usize {
     let caret = floor_char_boundary(text, caret.min(text.len()));
     split_statements(text)
@@ -729,6 +869,44 @@ mod tests {
         assert_eq!(find_next_query(quoted, 0), after);
         assert_eq!(find_next_query(quoted, after), quoted.len());
         assert_eq!(find_next_query("", 0), 0);
+    }
+
+    #[test]
+    fn json_button_shows_ten_characters() {
+        assert!(is_json_column("JSON"));
+        assert!(is_json_column("json"));
+        assert!(!is_json_column("VARCHAR"));
+        assert_eq!(json_button_label(r#"{"a":1}"#), r#"{"a":1}"#);
+        assert_eq!(
+            json_button_label(r#"{"abcdefghij":1}"#),
+            r#"{"abcdefgh...."#
+        );
+        assert_eq!(json_button_label("{\n\"ab\"}"), "{ \"ab\"}");
+    }
+
+    #[test]
+    fn json_tree_opens_nested_values() {
+        let text = r#"{"name":"ada","tags":["a","b"],"n":1,"ok":true,"x":null,"empty":{}}"#;
+        let rows = json_rows(text, &HashSet::new()).unwrap();
+        assert_eq!(rows[0].label, "name");
+        assert_eq!(rows[0].value, "\"ada\"");
+        assert_eq!(rows[1].label, "tags");
+        assert_eq!(rows[1].value, "[2]");
+        assert!(rows[1].expandable);
+        assert_eq!(rows[5].label, "empty");
+        assert_eq!(rows[5].value, "{}");
+        assert!(!rows[5].expandable);
+        let mut open = HashSet::new();
+        open.insert(rows[1].path.clone());
+        let rows = json_rows(text, &open).unwrap();
+        assert!(rows[1].open);
+        assert_eq!(rows[2].label, "0");
+        assert_eq!(rows[2].value, "\"a\"");
+        assert_eq!(rows[3].label, "1");
+        assert!(json_rows("select 1", &HashSet::new()).is_none());
+        let root = json_rows("[1, {\"a\": 2}]", &HashSet::new()).unwrap();
+        assert_eq!(root[0].value, "1");
+        assert_eq!(root[1].value, "{1}");
     }
 
     #[test]

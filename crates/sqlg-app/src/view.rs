@@ -122,6 +122,16 @@ button.active, button.primary { background: var(--accent); color: var(--accent-i
 .grid .tone-other { color: var(--syn-comment); }
 .grid td.num { text-align: right; }
 .grid td.null { color: var(--muted); font-style: italic; }
+.grid button.json { padding: 1px 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog.json { display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.dialog.json .tree { flex: none; min-height: 120px; max-height: min(480px, calc(100vh - 180px)); overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--editor); }
+.dialog.json .val { margin-left: 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dialog.json .j-str { color: var(--syn-string); }
+.dialog.json .j-num { color: var(--syn-number); }
+.dialog.json .j-bool { color: var(--syn-keyword); }
+.dialog.json .j-null { color: var(--muted); font-style: italic; }
+.dialog.json .j-obj, .dialog.json .j-arr { color: var(--muted); }
+.dialog.json pre { margin: 0; max-height: min(480px, calc(100vh - 180px)); overflow: auto; white-space: pre-wrap; color: var(--readable); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .col-sash { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; }
 .placeholder, .muted { color: var(--muted); padding: 8px; }
 .footer .summary { flex: 1; text-align: center; color: var(--muted); }
@@ -887,9 +897,29 @@ fn ResultBlock(window_id: u64, tab_id: Option<String>, section: SectionView) -> 
                                         class: "{cell_class(&cell)}",
                                         onclick: {
                                             let text = cell.text.clone();
-                                            move |_| copy_cell(text.clone())
+                                            let json = cell.json;
+                                            move |_| {
+                                                if !json {
+                                                    copy_cell(text.clone());
+                                                }
+                                            }
                                         },
-                                        "{cell.text}"
+                                        if cell.json {
+                                            button {
+                                                class: "json",
+                                                title: "Show JSON",
+                                                onclick: {
+                                                    let text = cell.text.clone();
+                                                    move |event| {
+                                                        event.stop_propagation();
+                                                        runtime::apply(Message::ShowJson(text.clone()));
+                                                    }
+                                                },
+                                                "{logic::json_button_label(&cell.text)}"
+                                            }
+                                        } else {
+                                            "{cell.text}"
+                                        }
                                     }
                                 }
                             }
@@ -945,6 +975,66 @@ fn Footer(view: ShellView) -> Element {
 }
 
 #[component]
+fn JsonModal(text: String) -> Element {
+    let mut open = use_signal(std::collections::HashSet::<String>::new);
+    let open_paths = open.read().clone();
+    let parsed = logic::json_rows(&text, &open_paths);
+    rsx! {
+        div {
+            class: "overlay",
+            onclick: move |_| runtime::apply(Message::DismissModal),
+            div {
+                class: "dialog json",
+                onclick: move |event| event.stop_propagation(),
+                h2 { "JSON" }
+                match parsed {
+                    Some(rows) => rsx! {
+                        div { class: "tree",
+                            for row in rows {
+                                div {
+                                    class: "tn",
+                                    style: "padding-left: {8 + u32::from(row.depth) * 14}px",
+                                    onclick: {
+                                        let path = row.path.clone();
+                                        let expandable = row.expandable;
+                                        move |_| {
+                                            if !expandable {
+                                                return;
+                                            }
+                                            let mut paths = open.write();
+                                            if !paths.insert(path.clone()) {
+                                                paths.remove(&path);
+                                            }
+                                        }
+                                    },
+                                    span { class: "cw",
+                                        if row.expandable {
+                                            {chevron_mark(row.open)}
+                                        }
+                                    }
+                                    span { class: "nm", "{row.label}" }
+                                    span { class: "val {row.kind}", "{row.value}" }
+                                }
+                            }
+                        }
+                    },
+                    None => rsx! {
+                        p { class: "muted", "This value is not JSON." }
+                        pre { "{text}" }
+                    },
+                }
+                div { class: "actions",
+                    button {
+                        onclick: move |_| runtime::apply(Message::DismissModal),
+                        "Close"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn ModalLayer(view: ShellView) -> Element {
     rsx! {
         match view.modal.clone() {
@@ -972,6 +1062,9 @@ fn ModalLayer(view: ShellView) -> Element {
                         }
                     }
                 }
+            },
+            ModalView::Json(text) => rsx! {
+                JsonModal { text }
             },
             ModalView::Connections(form) => rsx! {
                 div {
@@ -1171,6 +1264,7 @@ struct ColumnView {
     width: f64,
     numeric: bool,
     tone: String,
+    json: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -1179,12 +1273,14 @@ struct CellView {
     null: bool,
     numeric: bool,
     tone: String,
+    json: bool,
 }
 
 #[derive(Clone, PartialEq)]
 enum ModalView {
     None,
     Close { many: bool },
+    Json(String),
     Connections(ConnectionView),
 }
 
@@ -1329,6 +1425,7 @@ fn snapshot(window_id: u64) -> Option<ShellView> {
         Modal::Close(prompt) => ModalView::Close {
             many: prompt.quit || prompt.tab_ids.len() > 1,
         },
+        Modal::Json(text) => ModalView::Json(text.clone()),
         Modal::Connections(form) => ModalView::Connections(ConnectionView {
             generation: app.form_generation,
             names: app.connection_names.clone(),
@@ -1479,6 +1576,7 @@ fn section_view(
             width: widths.get(&column.name).copied().unwrap_or(140.0),
             numeric: column.numeric,
             tone: logic::column_tone(&column.type_name, "").into(),
+            json: logic::is_json_column(&column.type_name),
         })
         .collect::<Vec<_>>();
     let rows = section
@@ -1494,18 +1592,21 @@ fn section_view(
                     let tone = column
                         .map(|column| column.tone.clone())
                         .unwrap_or_else(|| "other".into());
+                    let json = column.is_some_and(|column| column.json);
                     match cell {
                         Some(text) => CellView {
                             text: text.clone(),
                             null: false,
                             numeric,
                             tone,
+                            json,
                         },
                         None => CellView {
                             text: "null".into(),
                             null: true,
                             numeric,
                             tone,
+                            json: false,
                         },
                     }
                 })

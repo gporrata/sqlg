@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use serde_json::Value;
-use sqlg_core::{LintCatalog, LintSchema, LintTable, split_statements};
+use sqlg_core::{LintCatalog, LintSchema, LintTable};
 use sqlg_mysql::SchemaSnapshot;
 
 pub const VISIBLE_ROWS: usize = 100;
@@ -274,66 +274,6 @@ pub fn utf16_to_byte(text: &str, utf16_index: usize) -> usize {
     text.len()
 }
 
-pub fn find_previous_word(text: &str, caret: usize) -> usize {
-    let caret = floor_char_boundary(text, caret.min(text.len()));
-    if caret == 0 {
-        return 0;
-    }
-    let chars = text[..caret].char_indices().collect::<Vec<_>>();
-    let mut index = chars.len();
-    if is_word_char(chars[index - 1].1) {
-        while index > 0 && is_word_char(chars[index - 1].1) {
-            index -= 1;
-        }
-        return chars.get(index).map(|(offset, _)| *offset).unwrap_or(0);
-    }
-    while index > 0 && !is_word_char(chars[index - 1].1) {
-        index -= 1;
-    }
-    while index > 0 && is_word_char(chars[index - 1].1) {
-        index -= 1;
-    }
-    chars.get(index).map(|(offset, _)| *offset).unwrap_or(0)
-}
-
-pub fn find_next_word(text: &str, caret: usize) -> usize {
-    let caret = floor_char_boundary(text, caret.min(text.len()));
-    let chars = text[caret..].char_indices().collect::<Vec<_>>();
-    if chars.is_empty() {
-        return text.len();
-    }
-    let mut index = 0usize;
-    if !is_word_char(chars[0].1) {
-        while index < chars.len() && !is_word_char(chars[index].1) {
-            index += 1;
-        }
-    }
-    while index < chars.len() && is_word_char(chars[index].1) {
-        index += 1;
-    }
-    chars
-        .get(index)
-        .map(|(offset, _)| caret + offset)
-        .unwrap_or(text.len())
-}
-
-pub fn find_previous_query(text: &str, caret: usize) -> usize {
-    let caret = floor_char_boundary(text, caret.min(text.len()));
-    let parts = split_statements(text);
-    let Some(current) = parts.iter().rev().find(|part| part.start <= caret) else {
-        return 0;
-    };
-    if caret > current.start {
-        return current.start;
-    }
-    parts
-        .iter()
-        .rev()
-        .find(|part| part.start < current.start)
-        .map(|part| part.start)
-        .unwrap_or(current.start)
-}
-
 const JSON_TREE_DEPTH: u8 = 32;
 
 pub fn is_json_column(type_name: &str) -> bool {
@@ -468,27 +408,6 @@ fn show_json_string(text: &str) -> String {
     }
     out.push('"');
     out
-}
-
-pub fn find_next_query(text: &str, caret: usize) -> usize {
-    let caret = floor_char_boundary(text, caret.min(text.len()));
-    split_statements(text)
-        .into_iter()
-        .find(|part| part.start > caret)
-        .map(|part| part.start)
-        .unwrap_or(text.len())
-}
-
-fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
-}
-
-fn floor_char_boundary(text: &str, index: usize) -> usize {
-    let mut at = index.min(text.len());
-    while at > 0 && !text.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
 }
 
 pub fn byte_to_utf16(text: &str, byte: usize) -> u32 {
@@ -797,79 +716,6 @@ fn type_tone(type_name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn previous_word_stops_at_the_word_start() {
-        let sql = "select * from trips";
-        let trips = sql.rfind("trips").unwrap();
-        let from = sql.find("from").unwrap();
-        assert_eq!(find_previous_word(sql, sql.len()), trips);
-        assert_eq!(find_previous_word(sql, trips), from);
-        assert_eq!(find_previous_word("sele", 2), 0);
-        assert_eq!(find_previous_word("  hi", 2), 0);
-        assert_eq!(find_previous_word("", 0), 0);
-        let ident = "foo_bar baz";
-        assert_eq!(
-            find_previous_word(ident, ident.len()),
-            ident.find("baz").unwrap()
-        );
-        assert_eq!(find_previous_word(ident, ident.find("baz").unwrap()), 0);
-        assert_eq!(find_previous_word("a.b", 3), 2);
-        assert_eq!(find_previous_word("a.b", 2), 0);
-    }
-
-    #[test]
-    fn next_word_stops_at_the_word_end() {
-        let sql = "select * from trips";
-        let select_end = sql.find(" *").unwrap();
-        let from_end = sql.find(" trips").unwrap();
-        assert_eq!(find_next_word(sql, 0), select_end);
-        assert_eq!(find_next_word(sql, select_end), from_end);
-        assert_eq!(find_next_word(sql, from_end), sql.len());
-        assert_eq!(find_next_word(sql, sql.len()), sql.len());
-        assert_eq!(find_next_word("sele", 2), 4);
-        assert_eq!(find_next_word("  hi", 0), 4);
-        assert_eq!(find_next_word("", 0), 0);
-        assert_eq!(find_next_word("a.b", 0), 1);
-        assert_eq!(find_next_word("a.b", 1), 3);
-        assert_eq!(find_next_word("a.b", 2), 3);
-    }
-
-    #[test]
-    fn previous_query_stops_at_the_query_start() {
-        let sql = "select 1;\nselect 2;\nselect 3";
-        let second = sql.find("select 2").unwrap();
-        let third = sql.find("select 3").unwrap();
-        assert_eq!(find_previous_query(sql, sql.len()), third);
-        assert_eq!(find_previous_query(sql, third), second);
-        assert_eq!(find_previous_query(sql, second), 0);
-        assert_eq!(find_previous_query(sql, 0), 0);
-        assert_eq!(find_previous_query(sql, second + "select".len()), second);
-        assert_eq!(find_previous_query(sql, sql.find('\n').unwrap()), 0);
-        let quoted = "select ';';\nselect 2";
-        let after = quoted.find("select 2").unwrap();
-        assert_eq!(find_previous_query(quoted, quoted.len()), after);
-        assert_eq!(find_previous_query(quoted, after), 0);
-        assert_eq!(find_previous_query("", 0), 0);
-        assert_eq!(find_previous_query("   ", 2), 0);
-    }
-
-    #[test]
-    fn next_query_stops_at_the_next_query_start() {
-        let sql = "select 1;\nselect 2;\nselect 3";
-        let second = sql.find("select 2").unwrap();
-        let third = sql.find("select 3").unwrap();
-        assert_eq!(find_next_query(sql, 0), second);
-        assert_eq!(find_next_query(sql, second), third);
-        assert_eq!(find_next_query(sql, second + "select".len()), third);
-        assert_eq!(find_next_query(sql, third), sql.len());
-        assert_eq!(find_next_query(sql, sql.len()), sql.len());
-        let quoted = "select ';';\nselect 2";
-        let after = quoted.find("select 2").unwrap();
-        assert_eq!(find_next_query(quoted, 0), after);
-        assert_eq!(find_next_query(quoted, after), quoted.len());
-        assert_eq!(find_next_query("", 0), 0);
-    }
 
     #[test]
     fn json_button_shows_ten_characters() {
